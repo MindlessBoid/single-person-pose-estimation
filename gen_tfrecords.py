@@ -61,6 +61,7 @@ def create_example(image, image_path, example, index, bbox_scale):
   :param example: a row in the dataframe
   :param index: index of dataframe, also is a image_id
   :param bbox_scale: to scale bbox, default = 1.25
+  TODO: deal with invisible (v = 1) kps that are out of bbox
   '''
 
   img_height = int(tf.shape(image)[0])
@@ -102,10 +103,12 @@ def create_example(image, image_path, example, index, bbox_scale):
   ## Parse x and y coords
   kps = example['keypoints']
   #recalculate for cropping 
-  xcoords = [kps[i] - bbox_x + offset_width for i in range(len(kps)) if i%3 == 0] 
-  ycoords = [kps[i] - bbox_y + offset_height for i in range(len(kps)) if i%3 == 1]
-  xcoords = [x if x > 0 else 0 for x in xcoords]
-  ycoords = [y if y > 0 else 0 for y in ycoords]
+  # coco format (...xn, yn, vn,...)
+  xcoords = [kps[i] for i in range(len(kps)) if i%3 == 0]
+  ycoords = [kps[i] for i in range(len(kps)) if i%3 == 1]
+  xcoords = [x - bbox_x + offset_width if x > 0  else 0 for x in xcoords]
+  ycoords = [y - bbox_y + offset_height if y > 0  else 0 for y in ycoords]
+
   #visibility flag
   vis = [int(kps[i]) for i in range(len(kps)) if i%3 == 2]
   num = example['num_keypoints']
