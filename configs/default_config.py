@@ -1,7 +1,6 @@
 import os
-
+from hourglass_config import *
 # Dataset configs
-
 NUM_KEYPOINTS = 17 # COCO number of keypoints per person
 BBOX_SCALE = 1.25
 NUM_EXAMPLER_PER_TFRECORD = 2048
@@ -14,6 +13,8 @@ LABEL_WIDTH = 64
 LABEL_HEIGHT = 64 
 LABEL_SHAPE  = (LABEL_HEIGHT, LABEL_WIDTH, NUM_KEYPOINTS)
 GAUSSIAN_KERNEL = 7
+
+
 
 # Training seting
 BATCH_SIZE = 16
