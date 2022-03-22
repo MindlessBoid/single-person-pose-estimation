@@ -2,7 +2,41 @@ from keras.layers import *
 import keras.backend as K
 from keras import Model
 
+class HourGlassNet:
+  def __init__(self, num_classes, num_stacks, num_filters, 
+              in_shape, out_shape, hm_activation = 'sigmoid', is_mobile = False):
+    self.num_classes = num_classes
+    self.num_stacks = num_stacks
+    self.num_filters = num_filters
+    self.in_shape = in_shape
+    self.out_shape = out_shape
+    self.hm_activation = hm_activation
+    if is_mobile:
+      self.bottleneck = create_bottleneck_mobile
+    else:
+      self.bottleneck = create_bottleneck
+    
+  
+  def create_hg_model(self):
+    self.hg = create_hourglass_network(self.in_shape, self.num_classes, self.num_stacks, 
+                            self.num_filters, self.bottleneck, self.hm_activation)
+    print(f'''Created HourGlassmodel:
+    1. {self.num_stacks} stacks.
+    2. {self.hg.count_params()} parameters. Call object.get_summary() for more detail.
+    ''')
+
+    return self.hg
+  
+  def get_summary(self):
+    self.hg.summry()
+
+
+'''
+  TODO: should probably put everything in a class
+'''
+
 def create_hourglass_network(input_shape, num_classes, num_stacks, num_filters, bottleneck, hm_activation) -> Model:
+  assert hm_activation == 'sigmoid' or hm_activation == 'linear'
   #clear last session
   K.clear_session() 
   _input = Input(shape = input_shape)
@@ -154,7 +188,7 @@ def create_heads(hg_input, hg_output, num_classes, num_filters, hm_activation, h
 
   # for intermediate supervision
   head_loss = Conv2D(filters = num_classes, kernel_size = (1, 1), activation = hm_activation, padding = 'same',
-                     name = name + '_loss')(head)
+                     name = 'heatmap' + str(hgid))(head)
 
   # map head_loss for next stage, default linar activation
   head_m = Conv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', name = name + '_conv2')(head_loss)

@@ -27,7 +27,10 @@ class DatasetBuilder:
 
     self.num_train_examples = self.get_ds_length(self.train_filenames)
     self.num_valid_examples = self.get_ds_length(self.valid_filenames)
-  
+
+    print(f'Train dataset with {self.num_train_examples} examples.')
+    print(f'Valid dataset with {self.num_valid_examples} examples.')
+
   def build_datasets(self) -> tf.data.Dataset:
     ds_train = tf.data.TFRecordDataset(self.train_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) #create dataset
     ds_train = ds_train.shuffle(self.shuffle_buffer) 
@@ -44,8 +47,6 @@ class DatasetBuilder:
     ds_valid = ds_valid.repeat()
     ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)#good practice to end the pipeline by prefetching
 
-    print(f'Train dataset with {self.num_train_examples} examples.')
-    print(f'Valid dataset with {self.num_valid_examples} examples.')
     return ds_train, ds_valid
 
   def prepare_train_example(self, example):

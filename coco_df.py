@@ -54,22 +54,22 @@ def convert_to_df(coco):
 
 def gen_trainval_df(config, drop_min_num_kps: bool = False):
 
-  min_num_kps = 0
+  min_num_kps = 1
   if drop_min_num_kps:
     min_num_kps = config.MIN_NUM_KEYPOINTS
   #train
   train_coco = COCO(config.TRAIN_ANNOT_FILE) 
   train_images_df, train_persons_df = convert_to_df(train_coco)
   train_coco_df = pd.merge(train_images_df, train_persons_df, right_index=True, left_index=True)
-  train_coco_df = train_coco_df[(train_coco_df['is_crowd'] == 0) & (train_coco_df['num_keypoints'] > min_num_kps)]
+  train_coco_df = train_coco_df[(train_coco_df['is_crowd'] == 0) & (train_coco_df['num_keypoints'] >= min_num_kps)]
 
   #valid
   valid_coco = COCO(config.VALID_ANNOT_FILE)
   valid_images_df, valid_persons_df = convert_to_df(valid_coco)
   valid_coco_df = pd.merge(valid_images_df, valid_persons_df, right_index=True, left_index=True)
-  valid_coco_df = valid_coco_df[(valid_coco_df['is_crowd'] == 0) & (valid_coco_df['num_keypoints'] >  min_num_kps)]
+  valid_coco_df = valid_coco_df[(valid_coco_df['is_crowd'] == 0) & (valid_coco_df['num_keypoints'] >=  min_num_kps)]
 
-  print(f"Only examples that are not crowd and num_keypoints > {min_num_kps} are chosen !")
+  print(f"Only examples that are not crowd and num_keypoints >= {min_num_kps} are chosen !")
   print(f"Length of train df: {len(train_coco_df)}")
   print(f"Length of valid df: {len(valid_coco_df)}")
   return train_coco_df, valid_coco_df
