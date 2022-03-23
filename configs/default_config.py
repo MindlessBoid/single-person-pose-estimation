@@ -44,4 +44,5 @@ VALID_TFRECORDS_DIR = os.path.join(TFRECORDS_DIR, 'valid')
 # Temporary dirs
 TEMPORARY_DIR = 'temp'
 CHECKPOINTS_PATH = os.path.join(TEMPORARY_DIR, 'checkpoints')
+LOGS_PATH =  os.path.join(TEMPORARY_DIR, 'logs')
 

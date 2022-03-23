@@ -48,6 +48,15 @@ class DatasetBuilder:
     ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)#good practice to end the pipeline by prefetching
 
     return ds_train, ds_valid
+  def get_ds_prediction(self) -> tf.data.Dataset:
+    ''' For prediction
+    '''
+    ds_valid = tf.data.TFRecordDataset(self.train_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) #create dataset
+    ds_valid = ds_valid.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds_valid = ds_valid.map(self.prepare_valid_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds_valid = ds_valid.batch(self.batch_size) #batch after shuffling to get unique batches at each epoch
+    ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)#good practice to end the pipeline by prefetching
+    return ds_valid
 
   def prepare_train_example(self, example):
     # Getting all the needed data first

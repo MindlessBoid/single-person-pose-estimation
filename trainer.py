@@ -3,6 +3,9 @@ import tensorflow as tf
 import math
 import glob
 import os
+import time
+from datetime import datetime, timedelta
+import pandas as pd
 from callbacks import *
 
 class Trainer:
@@ -18,6 +21,7 @@ class Trainer:
     self.valid_steps = math.ceil(ds_builder.num_valid_examples // config.BATCH_SIZE)
     self.epochs = epochs 
     self.checkpoints_path = config.CHECKPOINTS_PATH
+    self.logs_path = config.LOGS_PATH
     
     self.learning_rate = learning_rate
     self.batch_size = config.BATCH_SIZE
@@ -39,8 +43,8 @@ class Trainer:
     3. Learning rate {self.learning_rate}.
     4. Batch size {self.batch_size}.
     ''')
-   
-    self.model.fit(
+    start = time.time()
+    H = self.model.fit(
       self.ds_train, 
       epochs = self.epochs,
       callbacks = callbacks,
@@ -48,9 +52,15 @@ class Trainer:
       validation_data = self.ds_valid,
       validation_steps = self.valid_steps,
     )
+    end = time.time()
+    if not os.path.exists(self.logs_path):
+      os.makedirs(self.logs_path)
+    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}.csv") # path must exist
 
     print(f'''Finished training!!
+    Total training time {str(timedelta(seconds= end - start))}
     Temporary checkpoint is saved at {self.checkpoints_path}
+    Log is save at {self.logs_path}
     To save model call save_model() method
     ''')
   
@@ -66,7 +76,7 @@ class Trainer:
     self.model.compile(optimizer = self.optimizer,
             loss = self.loss)
     
-    print(f'Loading weights from {self.checkpoints_path}')
+    print(f'Loading best weights from {self.checkpoints_path}')
     self.model.load_weights(self.checkpoints_path + '/' + cpkt_name)
 
     today = date.today().strftime("%d-%m-%Y")
@@ -80,8 +90,8 @@ class Trainer:
     3. Learning rate {self.learning_rate}.
     4. batch size {self.batch_size}.
     ''')
-   
-    self.model.fit(
+    start = time.time()
+    H = self.model.fit(
       self.ds_train, 
       epochs = self.epochs,
       callbacks = callbacks,
@@ -90,15 +100,32 @@ class Trainer:
       validation_steps = self.valid_steps,
       initial_epoch = previous_epochs
     )
-
+    end = time.time()
+    if not os.path.exists(self.logs_path):
+      os.makedirs(self.logs_path)
+    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}.csv") # path must exist
     print(f'''Finished training!!
-    Temporary checkpoint is saved at {new_path}
-    To save model call save_model() method
+    Total training time {str(timedelta(seconds= end - start))}
+    Temporary checkpoint is saved at {new_path}.
+    Log is save at {self.logs_path}
+    To save model call save_model() method.
     ''')
   
   def save_model(self, path):
-    self.model.save(path)
+    loaded_model = self.get_best_weights_model()
+    loaded_model.save(path)
 
+  def get_best_weights_model(self):
+    ''' Load best weight and compile model
+        return the model
+        Should run on a new instance
+    '''
+    cpkt_name, previous_epochs = self.get_epochs_from_name(self.checkpoints_path)
+    self.model.compile(optimizer = self.optimizer,
+            loss = self.loss)
+    print(f'Loading best weights from {self.checkpoints_path}')
+    self.model.load_weights(self.checkpoints_path + '/' + cpkt_name)
+    return self.model
 
       
   @staticmethod
