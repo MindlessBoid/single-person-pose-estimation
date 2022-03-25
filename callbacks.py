@@ -9,7 +9,6 @@ def make_checkpoint_callback(checkpoint_filepath):
 
 # Callback for printing the LR at the end of each epoch.
 class PrintLR(tf.keras.callbacks.Callback):
-    """Callback for printing the LR at the beginning of each epoch"""
-
-    def on_epoch_begin(self, epoch, logs=None):
-        print('\nLearning rate for epoch {} is {}'.format(epoch + 1, self.model.optimizer.lr.numpy()))
+  def on_epoch_begin(self, epoch, logs=None):
+    print('\nLearning rate for epoch {} is {}'.format(epoch + 1,
+                                                      self.model.optimizer.lr.numpy()))
