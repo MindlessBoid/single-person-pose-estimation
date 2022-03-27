@@ -106,7 +106,7 @@ class Trainer:
     end = time.time()
     if not os.path.exists(self.logs_path):
       os.makedirs(self.logs_path)
-    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.model.optimizer.lr.numpy()}.csv")
+    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
     
     print(f'''Finished training!!
     Total training time {str(timedelta(seconds= end - start))}
@@ -124,7 +124,7 @@ class Trainer:
         return the model
         Should run on a new instance
     '''
-    cpkt_name, previous_epochs = self.get_epochs_from_name(self.checkpoints_path)
+    cpkt_name, previous_epochs, full_name = self.get_epochs_from_name(self.checkpoints_path)
 
     # load before compiling
     print(f'Loading best weights from {self.checkpoints_path}')
