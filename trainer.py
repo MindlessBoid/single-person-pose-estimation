@@ -115,9 +115,9 @@ class Trainer:
     To save model call save_model() method.
     ''')
   
-  def save_model(self, path):
+  def save_model(self, save_path):
     loaded_model = self.get_best_weights_model()
-    loaded_model.save(path)
+    loaded_model.save(save_path)
 
   def get_best_weights_model(self):
     ''' Load best weight and compile model
