@@ -21,15 +21,15 @@ class DatasetBuilder:
     self.shuffle_buffer = config.SHUFFLE_BUFFER
     self.train_filenames = sorted(tf.io.gfile.glob(f"{config.TRAIN_TFRECORDS_DIR}/*.tfrec"))
     self.valid_filenames = sorted(tf.io.gfile.glob(f"{config.VALID_TFRECORDS_DIR}/*.tfrec"))
-    if ratio != 1:
-      self.train_filenames = self.train_filenames[:round(ratio * len(self.train_filenames))]
-      self.valid_filenames = self.valid_filenames[:round(ratio * len(self.valid_filenames))]
+    if ratio < 1:
+      self.train_filenames = self.train_filenames[:int(np.ceil(ratio * len(self.train_filenames)))]
+      self.valid_filenames = self.valid_filenames[:int(np.ceil(ratio * len(self.valid_filenames)))]
 
     self.num_train_examples = self.get_ds_length(self.train_filenames)
     self.num_valid_examples = self.get_ds_length(self.valid_filenames)
 
-    print(f'Train dataset with {self.num_train_examples} examples.')
-    print(f'Valid dataset with {self.num_valid_examples} examples.')
+    print(f'Train dataset with {len(self.train_filenames)} tfrecords and {self.num_train_examples} examples.')
+    print(f'Valid dataset with {len(self.valid_filenames)} tfrecords and {self.num_valid_examples} examples.')
 
   def build_datasets(self) -> tf.data.Dataset:
     ds_train = tf.data.TFRecordDataset(self.train_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) #create dataset
@@ -51,12 +51,45 @@ class DatasetBuilder:
   def get_ds_prediction(self) -> tf.data.Dataset:
     ''' For prediction, using valid dataset
     '''
-    ds_valid = tf.data.TFRecordDataset(self.valid_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) #create dataset
+    ds_valid = tf.data.TFRecordDataset(self.valid_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) 
     ds_valid = ds_valid.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
     ds_valid = ds_valid.map(self.prepare_valid_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
-    ds_valid = ds_valid.batch(16) #batch after shuffling to get unique batches at each epoch
-    ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)#good practice to end the pipeline by prefetching
+    ds_valid = ds_valid.batch(self.batch_size) 
+    ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)
     return ds_valid
+
+  def get_metadata_prediction(self):
+    ds_valid = tf.data.TFRecordDataset(self.valid_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) #create dataset
+    ds_valid = ds_valid.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    
+    ann_ids = []
+    image_ids = []
+    gt_keypoints = []
+    undo_bbox = []
+    coco_url = []
+    raw_img_shape = []
+
+    for feature in ds_valid:
+      ann_ids.append(int(feature['ann_id']))
+
+      image_ids.append(int(feature['image_id']))
+
+      kpts = [] # for one instance [x1,y1,v1,...,xk,yk,vk]
+      for x, y, v in zip(feature['keypoints/x'], feature['keypoints/y'], feature['keypoints/vis']):
+        kpts.append(x)
+        kpts.append(y)
+        kpts.append(v)
+      gt_keypoints.append(kpts)
+    
+      bbox = []
+      bbox.append(feature['bbox_x'] - feature['offset_width'])
+      bbox.append(feature['bbox_y'] - feature['offset_height'])
+      undo_bbox.append(bbox)
+
+      coco_url.append(feature['coco_url'])
+
+      raw_img_shape.append((feature['width'], feature['height']))
+    return ann_ids, image_ids, gt_keypoints, undo_bbox, coco_url, raw_img_shape
 
   def prepare_train_example(self, example):
     # Getting all the needed data first
@@ -118,12 +151,17 @@ class DatasetBuilder:
         "image_id": tf.io.FixedLenFeature([], tf.int64),
         "image": tf.io.FixedLenFeature([], tf.string),
         "image_path": tf.io.FixedLenFeature([], tf.string),
+        "coco_url": tf.io.FixedLenFeature([], tf.string),
         "width": tf.io.FixedLenFeature([], tf.int64),
         "height": tf.io.FixedLenFeature([], tf.int64),
         "keypoints/x": tf.io.VarLenFeature(tf.float32),
         "keypoints/y": tf.io.VarLenFeature(tf.float32),
         "keypoints/vis": tf.io.VarLenFeature(tf.int64),
-        "keypoints/num": tf.io.FixedLenFeature([], tf.int64)
+        "keypoints/num": tf.io.FixedLenFeature([], tf.int64),
+        "bbox_x": tf.io.FixedLenFeature([], tf.float32),
+        "bbox_y": tf.io.FixedLenFeature([], tf.float32),
+        "offset_width": tf.io.FixedLenFeature([], tf.float32),
+        "offset_height": tf.io.FixedLenFeature([], tf.float32)
     }
     
     example = tf.io.parse_single_example(example, feature_description)

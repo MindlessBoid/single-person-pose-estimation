@@ -2,6 +2,7 @@ from datetime import date
 import tensorflow as tf
 import math
 import glob
+import pandas as pd
 import os
 import time
 from datetime import datetime, timedelta
@@ -33,15 +34,15 @@ class Trainer:
     self.model.compile(optimizer = self.optimizer, loss = self.loss)
 
     today = date.today().strftime("%d-%m-%Y")
-    path = self.checkpoints_path + f'/{today}-E{self.epochs}' + '.cpkt'
-    ckpt_callback = make_checkpoint_callback(path)
+
+    ckpt_callback = make_checkpoint_callback(self.checkpoints_path)
     callbacks = [ckpt_callback, PrintLR()]
 
-    print(f'''Start traing with:
+    print(f'''First training with:
     1. Current date {today}.
     2. Number of epochs {self.epochs}.
-    3. Learning rate {self.model.optimizer.lr.numpy()}.
-    4. Batch size {self.batch_size}.
+    3. Batch size {self.batch_size}.
+    4. Optimizer configs: {self.model.optimizer.get_config()}
     ''')
     start = time.time()
     H = self.model.fit(
@@ -55,44 +56,61 @@ class Trainer:
     end = time.time()
     if not os.path.exists(self.logs_path):
       os.makedirs(self.logs_path)
-    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.model.optimizer.lr.numpy()}.csv")
+    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
 
+    # temporary save
+    path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.cpkt'
+    self.model.save_weights(path)
+    
+    print('---------------------------------------------------------')
     print(f'''Finished training!!
-    Total training time {str(timedelta(seconds= end - start))}
-    Temporary checkpoint is saved at {self.checkpoints_path}
-    Log is save at {self.logs_path}
-    To save model call save_model() method
+    - Total training time {str(timedelta(seconds= end - start))}
+    - Temporary checkpoints are saved at {self.checkpoints_path}
+    - Log is save at {self.logs_path}
     ''')
   
   def resume_training(self):
     '''
-    This shoudl be called on a newly created instance
+    This should be called on a newly created instance
     '''
-    assert os.path.exists(self.checkpoints_path)
+    assert os.path.exists(self.checkpoints_path) and os.path.exists(self.logs_path)
 
+    # already check empty
     cpkt_name, previous_epochs, full_name = self.get_epochs_from_name(self.checkpoints_path)
     self.epochs += previous_epochs
 
-    print(f'Loading best weights from {self.checkpoints_path}')
+    # Load and compile model from last training
+    print(f'Loading weights from epoch {previous_epochs}')
     self.model.load_weights(self.checkpoints_path + '/' + cpkt_name)
     print(f'Loaded: {full_name}')
     self.model.compile(optimizer = self.optimizer, loss = self.loss)
 
+    # Set learning rate
     K.set_value(self.model.optimizer.learning_rate, self.learning_rate) # seems like only way that works
-    print(f'Optimizer configs: {self.model.optimizer.get_config()}')
-    print(f'learning_rate: {self.model.optimizer.lr.numpy()}' )
-   
+
+    # Checkpoint to save best weights
     today = date.today().strftime("%d-%m-%Y")
-    new_path = self.checkpoints_path + f'/{today}-E{self.epochs}' + '.cpkt'
-    ckpt_callback = make_checkpoint_callback(new_path)
+    ckpt_callback = make_checkpoint_callback(self.checkpoints_path)
     callbacks = [ckpt_callback, PrintLR()]
 
-    print(f'''Start traing with:
+    # Get the best val loss from logs 
+    log_filenames = sorted(glob.glob(self.logs_path + '/*'))
+    df = pd.concat(map(pd.read_csv, log_filenames), ignore_index=True)
+    min_val_loss = df[df['val_loss'] == df['val_loss'].min()]
+    print('---------------------------------------------------------')
+    print(f'Best current val_loss at epoch {min_val_loss.index.values[0]+ 1}')
+    for col_name, col_value in min_val_loss.iteritems():
+      if col_name != 'Unnamed: 0':
+        print(f'{col_name}: {col_value.values[0]}')
+    print('---------------------------------------------------------')
+    
+    print(f'''Resume training with:
     1. Current date {today}.
     2. Resume training for {self.epochs - previous_epochs} epochs, from epoch {previous_epochs} to epoch {self.epochs}.
-    3. Learning rate {self.model.optimizer.lr.numpy()}.
-    4. batch size {self.batch_size}.
+    3. Batch size {self.batch_size}.
+    4. Optimizer configs: {self.model.optimizer.get_config()}
     ''')
+    # Train and save after training
     start = time.time()
     H = self.model.fit(
       self.ds_train, 
@@ -108,28 +126,27 @@ class Trainer:
       os.makedirs(self.logs_path)
     pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
     
+    # Temporary save
+    path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.cpkt'
+    self.model.save_weights(path)
+
+    print('---------------------------------------------------------')
     print(f'''Finished training!!
     Total training time {str(timedelta(seconds= end - start))}
-    Temporary checkpoint is saved at {new_path}.
+    Temporary checkpoints are saved at {path}.
     Log is save at {self.logs_path}
-    To save model call save_model() method.
     ''')
   
-  def save_model(self, save_path):
-    loaded_model = self.get_best_weights_model()
-    loaded_model.save(save_path)
+
 
   def get_best_weights_model(self):
     ''' Load best weight and compile model
         return the model
         Should run on a new instance
     '''
-    cpkt_name, previous_epochs, full_name = self.get_epochs_from_name(self.checkpoints_path)
-
     # load before compiling
     print(f'Loading best weights from {self.checkpoints_path}')
-    self.model.load_weights(self.checkpoints_path + '/' + cpkt_name)
-    print(f'Loaded: {full_name}')
+    self.model.load_weights(self.checkpoints_path + '/best_val_loss_weights.cpkt')
     self.model.compile(optimizer = self.optimizer, loss = self.loss)
 
     return self.model
@@ -139,16 +156,17 @@ class Trainer:
   def get_epochs_from_name(path):
     ''' Extract the checkpoint name and the epochs number which were saved in previous trains
         ONLY get the latest checkpoint 
+        format of checkpoint file E{num_of_epochs}-{date}.cpkt.index
     '''
-    name = glob.glob(path + '/*.cpkt.index')
+    name = glob.glob(path + '/*_cont.cpkt.index')
+    assert(name) # check empty
     name.sort()
 
     last = name[-1] #last in the list 
     last = last.split('/')[-1] # get rid of slashes
-    ckpt_name = last[:-6] # eliminate '.index'
+    ckpt_name = last[:-6] # eliminate '.index', to load using keras
     
-    epochs = ckpt_name[:-5] # eliminate '.cpkt'
-    epochs = epochs.split('-')[-1] # get E{epcoch}
+    epochs = last.split('_')[1] # get E{epcoch}
     epochs = int(epochs[1:]) # get rid of 'E'
     
     return ckpt_name, epochs, last

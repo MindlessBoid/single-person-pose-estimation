@@ -119,18 +119,26 @@ def create_example(image, image_path, example, index, bbox_scale):
   ## Image id
   image_id = index # since we use image id as index for coco_df
 
+  ## COCO url
+  coco_url = example['coco_url']
+
   ## Features
   feature = {
         "ann_id": int64_feature(ann_id),
         "image_id": int64_feature(image_id),
         "image": image_feature(image),
         "image_path": bytes_feature(image_path),
+        "coco_url": bytes_feature(coco_url),
         "width": int64_feature(int(target_width)), # since we crop and pad
         "height": int64_feature(int(target_height)), # since we crop and pad
         "keypoints/x": float_feature_list(xcoords),
         "keypoints/y": float_feature_list(ycoords),
         "keypoints/vis": int64_feature_list(vis),
-        "keypoints/num": int64_feature(num)
+        "keypoints/num": int64_feature(num),
+        "bbox_x": float_feature(bbox_x),
+        "bbox_y": float_feature(bbox_y),
+        "offset_width": float_feature(offset_width),
+        "offset_height": float_feature(offset_height)
     }
   return tf.train.Example(features=tf.train.Features(feature=feature))
 

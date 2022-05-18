@@ -4,4 +4,6 @@
 /dataset/tfrecords/
 /dataset/images/
 /dataset/annotations/
+/dataset/annotations/
 /temp/
+/trained_models/
