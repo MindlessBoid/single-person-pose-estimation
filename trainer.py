@@ -35,7 +35,7 @@ class Trainer:
 
     today = date.today().strftime("%d-%m-%Y")
 
-    ckpt_callback = make_checkpoint_callback(self.checkpoints_path)
+    ckpt_callback = make_checkpoint_callback(self.checkpoints_path + '/best_val_loss_weights.cpkt')
     callbacks = [ckpt_callback, PrintLR()]
 
     print(f'''First training with:
@@ -88,9 +88,9 @@ class Trainer:
     # Set learning rate
     K.set_value(self.model.optimizer.learning_rate, self.learning_rate) # seems like only way that works
 
-    # Checkpoint to save best weights
+    # Checkpoint to save best weights in current training session
     today = date.today().strftime("%d-%m-%Y")
-    ckpt_callback = make_checkpoint_callback(self.checkpoints_path)
+    ckpt_callback = make_checkpoint_callback(self.checkpoints_path + '/temp.ckpt')
     callbacks = [ckpt_callback, PrintLR()]
 
     # Get the best val loss from logs 
@@ -105,10 +105,11 @@ class Trainer:
     print('---------------------------------------------------------')
     
     print(f'''Resume training with:
-    1. Current date {today}.
-    2. Resume training for {self.epochs - previous_epochs} epochs, from epoch {previous_epochs} to epoch {self.epochs}.
-    3. Batch size {self.batch_size}.
-    4. Optimizer configs: {self.model.optimizer.get_config()}
+    1. Train session number {len(log_filenames) + 1}.
+    2. Current date {today}.
+    3. Resume training for {self.epochs - previous_epochs} epochs, from epoch {previous_epochs} to epoch {self.epochs}.
+    4. Batch size {self.batch_size}.
+    5. Optimizer configs: {self.model.optimizer.get_config()}
     ''')
     # Train and save after training
     start = time.time()
@@ -126,9 +127,34 @@ class Trainer:
       os.makedirs(self.logs_path)
     pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
     
-    # Temporary save
+    # Save last
     path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.cpkt'
     self.model.save_weights(path)
+
+    # Compare the best weights and save the better one
+    print('---------------------------------------------------------')
+    print('Comparing current best val_loss with previous best val_loss checkpoints')
+    prev_min_val_loss = min_val_loss['val_loss'].values[0]
+    curr_min_val_loss = min(H.history['val_loss'])
+    if curr_min_val_loss < prev_min_val_loss:
+      print('Current best val_loss is lower/better than previous best val_loss')
+      best_data = self.checkpoints_path + '/best_val_loss_weights.cpkt.data-00000-of-00001'
+      best_index = self.checkpoints_path + '/best_val_loss_weights.cpkt.index'
+      temp_data = self.checkpoints_path + '/temp.cpkt.data-00000-of-00001'
+      temp_index = self.checkpoints_path + '/temp.cpkt.index'
+      if os.path.exists(best_data) and os.path.exists(best_index) and os.path.exists(temp_data) and os.path.exists(temp_index):
+        os.remove(best_data)
+        os.remove(best_index)
+        os.rename(temp_data, best_data)
+        os.rename(temp_index, best_index)
+        print('Replaced old val_loss with new val_loss checkpoints')
+      else:
+        print('Paths do not exist!!')
+    else:
+      print('No improvment')
+
+
+
 
     print('---------------------------------------------------------')
     print(f'''Finished training!!
@@ -137,7 +163,6 @@ class Trainer:
     Log is save at {self.logs_path}
     ''')
   
-
 
   def get_best_weights_model(self):
     ''' Load best weight and compile model
@@ -151,6 +176,15 @@ class Trainer:
 
     return self.model
 
+  def get_lattest_weights_model(self):
+    cpkt_name, previous_epochs, full_name = self.get_epochs_from_name(self.checkpoints_path)
+
+    # Load and compile model from last training
+    print(f'Loading lattest trained weights from epoch {previous_epochs}')
+    self.model.load_weights(self.checkpoints_path + '/' + cpkt_name)
+    print(f'Loaded: {full_name}')
+    self.model.compile(optimizer = self.optimizer, loss = self.loss)
+    return self.model
       
   @staticmethod
   def get_epochs_from_name(path):

@@ -1,6 +1,6 @@
 import tensorflow as tf
 def make_checkpoint_callback(checkpoints_path):
-  return tf.keras.callbacks.ModelCheckpoint(filepath = checkpoints_path + '/best_val_loss_weights.cpkt',
+  return tf.keras.callbacks.ModelCheckpoint(filepath = checkpoints_path,
                                             save_weights_only = True,
                                             monitor = 'val_loss',
                                             mode = 'min', # since monitor val_loss, overwrite when its min
