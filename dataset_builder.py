@@ -48,48 +48,17 @@ class DatasetBuilder:
     ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)#good practice to end the pipeline by prefetching
 
     return ds_train, ds_valid
-  def get_ds_prediction(self) -> tf.data.Dataset:
+  def get_ds_prediction(self, batch_size = 16) -> tf.data.Dataset:
     ''' For prediction, using valid dataset
+        Giving larger batch_size for fast prediction -> may cause OOM
     '''
     ds_valid = tf.data.TFRecordDataset(self.valid_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) 
     ds_valid = ds_valid.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
-    ds_valid = ds_valid.map(self.prepare_valid_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
-    ds_valid = ds_valid.batch(self.batch_size) 
+    ds_valid = ds_valid.map(self.prepare_prediction_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds_valid = ds_valid.batch(batch_size) 
     ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)
     return ds_valid
 
-  def get_metadata_prediction(self):
-    ds_valid = tf.data.TFRecordDataset(self.valid_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) #create dataset
-    ds_valid = ds_valid.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
-    
-    ann_ids = []
-    image_ids = []
-    gt_keypoints = []
-    undo_bbox = []
-    coco_url = []
-    raw_img_shape = []
-
-    for feature in ds_valid:
-      ann_ids.append(int(feature['ann_id']))
-
-      image_ids.append(int(feature['image_id']))
-
-      kpts = [] # for one instance [x1,y1,v1,...,xk,yk,vk]
-      for x, y, v in zip(feature['keypoints/x'], feature['keypoints/y'], feature['keypoints/vis']):
-        kpts.append(x)
-        kpts.append(y)
-        kpts.append(v)
-      gt_keypoints.append(kpts)
-    
-      bbox = []
-      bbox.append(feature['bbox_x'] - feature['offset_width'])
-      bbox.append(feature['bbox_y'] - feature['offset_height'])
-      undo_bbox.append(bbox)
-
-      coco_url.append(feature['coco_url'])
-
-      raw_img_shape.append((feature['width'], feature['height']))
-    return ann_ids, image_ids, gt_keypoints, undo_bbox, coco_url, raw_img_shape
 
   def prepare_train_example(self, example):
     # Getting all the needed data first
@@ -139,7 +108,31 @@ class DatasetBuilder:
     raw_image = tf.image.resize(raw_image, (self.image_shape[0], self.image_shape[1]))
     
     return raw_image, heatmaps
+  
+  def prepare_prediction_example(self, example):
+    '''
+    Basically the same with ds_valid but we dont generate heatmaps nor recalculate keypoints and get all meta data
+    '''
+    raw_image = example['image']
 
+    meta = {}
+    meta['original_height'] = example['height']
+    meta['original_width'] = example['width']
+    meta['ann_id'] = example['ann_id']
+    meta['image_id'] = example['image_id']
+    meta['coco_url'] = example['coco_url']
+    meta['keypoints/x'] = example['keypoints/x']
+    meta['keypoints/y'] = example['keypoints/y']
+    meta['keypoints/vis'] = example['keypoints/vis']
+    meta['bbox_x'] = example['bbox_x'] # top left bbox
+    meta['bbox_y'] = example['bbox_y'] # top left bbox
+    meta['offset_width'] = example['offset_width'] # amount to add if the bbox out of the image 
+    meta['offset_height'] = example['offset_height'] # amount to add if the bbox out of the image 
+
+    # to 256x256
+    resized_image = tf.image.resize(raw_image, (self.image_shape[0], self.image_shape[1]))
+
+    return resized_image, meta
 
   @staticmethod
   def parse_tfrecord_fn(example):

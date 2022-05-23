@@ -2,7 +2,7 @@ import os
 
 # Dataset configs
 NUM_KEYPOINTS = 17 # COCO number of keypoints per person
-MIN_NUM_KEYPOINTS = 10 # min number of keypoitsn one persone MUST have
+MIN_NUM_KEYPOINTS = 5 # min number of keypoitsn one person MUST have
 BBOX_SCALE = 1.25
 NUM_EXAMPLER_PER_TFRECORD = 2048
 

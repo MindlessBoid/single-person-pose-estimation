@@ -9,13 +9,14 @@ from datetime import datetime, timedelta
 import pandas as pd
 from callbacks import *
 from keras import backend as K
+from loss import weighted_mean_squared_error
 
 class Trainer:
   ''' TODO:
   Add a test function
   
   '''
-  def __init__(self, model, ds_builder, epochs, learning_rate, config): 
+  def __init__(self, model, ds_builder, epochs, learning_rate, loss_str, config): 
     self.model = model
     self.ds_train, self.ds_valid = ds_builder.build_datasets()
 
@@ -28,14 +29,14 @@ class Trainer:
     self.learning_rate = learning_rate
     self.batch_size = config.BATCH_SIZE
     self.optimizer =  tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
-    self.loss = tf.keras.losses.MeanSquaredError()
+    self.loss = self.get_loss_from_string(loss_str)
   
   def train(self):
     self.model.compile(optimizer = self.optimizer, loss = self.loss)
 
     today = date.today().strftime("%d-%m-%Y")
 
-    ckpt_callback = make_checkpoint_callback(self.checkpoints_path + '/best_val_loss_weights.cpkt')
+    ckpt_callback = make_checkpoint_callback(self.checkpoints_path + '/best_val_loss_weights.ckpt')
     callbacks = [ckpt_callback, PrintLR()]
 
     print(f'''First training with:
@@ -59,7 +60,7 @@ class Trainer:
     pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
 
     # temporary save
-    path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.cpkt'
+    path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.ckpt'
     self.model.save_weights(path)
     
     print('---------------------------------------------------------')
@@ -76,12 +77,12 @@ class Trainer:
     assert os.path.exists(self.checkpoints_path) and os.path.exists(self.logs_path)
 
     # already check empty
-    cpkt_name, previous_epochs, full_name = self.get_epochs_from_name(self.checkpoints_path)
+    ckpt_name, previous_epochs, full_name = self.get_epochs_from_name(self.checkpoints_path)
     self.epochs += previous_epochs
 
     # Load and compile model from last training
     print(f'Loading weights from epoch {previous_epochs}')
-    self.model.load_weights(self.checkpoints_path + '/' + cpkt_name)
+    self.model.load_weights(self.checkpoints_path + '/' + ckpt_name)
     print(f'Loaded: {full_name}')
     self.model.compile(optimizer = self.optimizer, loss = self.loss)
 
@@ -93,15 +94,23 @@ class Trainer:
     ckpt_callback = make_checkpoint_callback(self.checkpoints_path + '/temp.ckpt')
     callbacks = [ckpt_callback, PrintLR()]
 
-    # Get the best val loss from logs 
+    # Get data from logs 
     log_filenames = sorted(glob.glob(self.logs_path + '/*'))
     df = pd.concat(map(pd.read_csv, log_filenames), ignore_index=True)
-    min_val_loss = df[df['val_loss'] == df['val_loss'].min()]
+    # last train
     print('---------------------------------------------------------')
-    print(f'Best current val_loss at epoch {min_val_loss.index.values[0]+ 1}')
-    for col_name, col_value in min_val_loss.iteritems():
-      if col_name != 'Unnamed: 0':
-        print(f'{col_name}: {col_value.values[0]}')
+    last_train = df.iloc[-1:] # get last row as a dataframe object
+    print(f'- Result from last train session number {len(log_filenames)} at epoch {previous_epochs}:')
+    for col_name_1, col_value_1 in last_train.iteritems():
+      if col_name_1 != 'Unnamed: 0':
+        print(f'{col_name_1}: {col_value_1.values[0]}')
+    # best epoch so far
+    print('---------------------------------------------------------')
+    min_val_loss = df[df['val_loss'] == df['val_loss'].min()]
+    print(f'- Best current val_loss at epoch {min_val_loss.index.values[0]+ 1}:')
+    for col_name_2, col_value_2 in min_val_loss.iteritems():
+      if col_name_2 != 'Unnamed: 0':
+        print(f'{col_name_2}: {col_value_2.values[0]}')
     print('---------------------------------------------------------')
     
     print(f'''Resume training with:
@@ -128,20 +137,23 @@ class Trainer:
     pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
     
     # Save last
-    path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.cpkt'
+    path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.ckpt'
     self.model.save_weights(path)
 
     # Compare the best weights and save the better one
+    print()
     print('---------------------------------------------------------')
     print('Comparing current best val_loss with previous best val_loss checkpoints')
     prev_min_val_loss = min_val_loss['val_loss'].values[0]
     curr_min_val_loss = min(H.history['val_loss'])
+
+    best_data = self.checkpoints_path + '/best_val_loss_weights.ckpt.data-00000-of-00001'
+    best_index = self.checkpoints_path + '/best_val_loss_weights.ckpt.index'
+    temp_data = self.checkpoints_path + '/temp.ckpt.data-00000-of-00001'
+    temp_index = self.checkpoints_path + '/temp.ckpt.index'
+
     if curr_min_val_loss < prev_min_val_loss:
       print('Current best val_loss is lower/better than previous best val_loss')
-      best_data = self.checkpoints_path + '/best_val_loss_weights.cpkt.data-00000-of-00001'
-      best_index = self.checkpoints_path + '/best_val_loss_weights.cpkt.index'
-      temp_data = self.checkpoints_path + '/temp.cpkt.data-00000-of-00001'
-      temp_index = self.checkpoints_path + '/temp.cpkt.index'
       if os.path.exists(best_data) and os.path.exists(best_index) and os.path.exists(temp_data) and os.path.exists(temp_index):
         os.remove(best_data)
         os.remove(best_index)
@@ -151,16 +163,16 @@ class Trainer:
       else:
         print('Paths do not exist!!')
     else:
-      print('No improvment')
-
-
+      os.remove(temp_data)
+      os.remove(temp_index)
+      print('No improvement')
 
 
     print('---------------------------------------------------------')
     print(f'''Finished training!!
     Total training time {str(timedelta(seconds= end - start))}
     Temporary checkpoints are saved at {path}.
-    Log is save at {self.logs_path}
+    Log is saved at {self.logs_path}
     ''')
   
 
@@ -171,17 +183,17 @@ class Trainer:
     '''
     # load before compiling
     print(f'Loading best weights from {self.checkpoints_path}')
-    self.model.load_weights(self.checkpoints_path + '/best_val_loss_weights.cpkt')
+    self.model.load_weights(self.checkpoints_path + '/best_val_loss_weights.ckpt')
     self.model.compile(optimizer = self.optimizer, loss = self.loss)
 
     return self.model
 
   def get_lattest_weights_model(self):
-    cpkt_name, previous_epochs, full_name = self.get_epochs_from_name(self.checkpoints_path)
+    ckpt_name, previous_epochs, full_name = self.get_epochs_from_name(self.checkpoints_path)
 
     # Load and compile model from last training
     print(f'Loading lattest trained weights from epoch {previous_epochs}')
-    self.model.load_weights(self.checkpoints_path + '/' + cpkt_name)
+    self.model.load_weights(self.checkpoints_path + '/' + ckpt_name)
     print(f'Loaded: {full_name}')
     self.model.compile(optimizer = self.optimizer, loss = self.loss)
     return self.model
@@ -190,9 +202,9 @@ class Trainer:
   def get_epochs_from_name(path):
     ''' Extract the checkpoint name and the epochs number which were saved in previous trains
         ONLY get the latest checkpoint 
-        format of checkpoint file E{num_of_epochs}-{date}.cpkt.index
+        format of checkpoint file E{num_of_epochs}-{date}.ckpt.index
     '''
-    name = glob.glob(path + '/*_cont.cpkt.index')
+    name = glob.glob(path + '/*_cont.ckpt.index')
     assert(name) # check empty
     name.sort()
 
@@ -204,3 +216,23 @@ class Trainer:
     epochs = int(epochs[1:]) # get rid of 'E'
     
     return ckpt_name, epochs, last
+
+  @staticmethod
+  def get_loss_from_string(loss_str):
+    loss_str = loss_str.lower()
+    if loss_str == 'weighted_mse' or loss_str == 'weight_mean_squared_error':
+      print('Weighed Mean Squared Error')
+      return weighted_mean_squared_error
+    elif loss_str == 'mse' or loss_str == 'mean_squared_error':
+      print('Mean Squared Error')
+      return tf.keras.losses.mean_squared_error
+    else:
+      print('None')
+      return None
+
+
+
+
+
+
+
