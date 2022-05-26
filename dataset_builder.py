@@ -230,4 +230,3 @@ class DatasetBuilder:
       temp = temp.split('.')[0]
       length += int(temp)
     return length
-
