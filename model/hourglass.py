@@ -54,12 +54,16 @@ def create_hourglass_network(input_shape, num_classes, num_stacks, num_filters, 
   return model
 
 def ConvBlock(_input, num_filters, kernel_size, name, is_mobile = False):
-  x = BatchNormalization(name = name + '_bn')(_input)
-  x = Activation('relu', name = name + '_act')(x)
+  
   if is_mobile:
-     x = SeparableConv2D(filters = num_filters, kernel_size = kernel_size, padding = 'same', name = name + '_conv')(x)
+     x = SeparableConv2D(filters = num_filters, kernel_size = kernel_size, activation = 'relu', 
+                          padding = 'same', name = name + '_conv')(_input)
   else:
-    x = Conv2D(filters =num_filters, kernel_size = kernel_size, padding = 'same', name = name + '_conv')(x)
+    x = Conv2D(filters = num_filters, kernel_size = kernel_size, activation = 'relu',
+                padding = 'same', name = name + '_conv')(_input)
+
+  x = BatchNormalization(name = name + '_bn')(x)
+    
   return x
 
 def create_bottleneck(_input, num_filters, name: str):
@@ -74,7 +78,7 @@ def create_bottleneck(_input, num_filters, name: str):
   if K.int_shape(_input)[-1] == num_filters:
     skip = _input
   else:
-    skip = Conv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', name = name + '_skip_conv')(_input)
+    skip = Conv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', activation = 'relu', name = name + '_skip_conv')(_input)
 
   x = ConvBlock(_input = skip, num_filters = num_filters//2, kernel_size = (1, 1), name = name + '_convblock1')
   x = ConvBlock(_input = x, num_filters = num_filters//2, kernel_size = (3, 3), name = name + '_convblock2')
@@ -95,7 +99,7 @@ def create_bottleneck_mobile(_input, num_filters, name: str):
   if K.int_shape(_input)[-1] == num_filters:
     skip = _input
   else:
-    skip = SeparableConv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', name = name + '_skip_conv')(_input)
+    skip = SeparableConv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', activation = 'relu', name = name + '_skip_conv')(_input)
 
   x = ConvBlock(_input = skip, num_filters = num_filters//2, kernel_size = (1, 1), name = name + '_convblock1', is_mobile = True)
   x = ConvBlock(_input = x, num_filters = num_filters//2, kernel_size = (3, 3), name = name + '_convblock2', is_mobile = True)
@@ -112,9 +116,9 @@ def create_front_module(_input, num_filters, bottleneck):
   2 bottleneck
   output resolution should match with label resolution (.e.i 64x64)
   '''
-  x = Conv2D(filters = num_filters//4,  kernel_size = (7, 7), strides = (2, 2), padding = 'same', name = 'front_conv')(_input)
+
+  x = Conv2D(filters = num_filters//4,  kernel_size = (7, 7), strides = (2, 2), activation = 'relu', padding = 'same', name = 'front_conv')(_input)
   x = BatchNormalization(name = 'front_bn')(x)
-  x = Activation('relu', name = 'front_act')(x)
 
   x = bottleneck(x, num_filters//2, 'front_bottleneck1')
   x = MaxPool2D(pool_size = (2, 2), strides = (2, 2), name = 'front_maxpool')(x)
@@ -182,18 +186,17 @@ def create_heads(hg_input, hg_output, num_classes, num_filters, hm_activation, h
   :param hgid: for naming
   '''
   name = 'head' + str(hgid)
-  head = Conv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', name = name + '_conv1')(hg_output)
-  head = BatchNormalization(name = name + '_bn')(head)
-  head = Activation('relu', name = name + '_act')(head)
+
+  head = ConvBlock(_input = hg_output, num_filters = num_filters, kernel_size = (1, 1), name = name + '_convblock')
 
   # for intermediate supervision
   head_loss = Conv2D(filters = num_classes, kernel_size = (1, 1), activation = hm_activation, padding = 'same',
                      name = 'heatmap' + str(hgid))(head)
 
   # map head_loss for next stage, default linar activation
-  head_m = Conv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', name = name + '_conv2')(head_loss)
+  head_m = Conv2D(filters = num_filters, kernel_size = (1, 1), activation = 'linear', padding = 'same', name = name + '_conv2')(head_loss)
   # head for next stage
-  head =  Conv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', name = name + '_conv3')(head)
+  head =  Conv2D(filters = num_filters, kernel_size = (1, 1), activation = 'linear', padding = 'same', name = name + '_conv3')(head)
 
   head_next_stage = Add(name = name + '_next_stage')([hg_input, head_m, head])
 
