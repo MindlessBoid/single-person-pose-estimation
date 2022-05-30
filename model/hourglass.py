@@ -1,203 +1,232 @@
-from keras.layers import *
+from keras.layers import Conv2D, SeparableConv2D, BatchNormalization, MaxPool2D, Add, UpSampling2D, Input
 import keras.backend as K
 from keras import Model
 
-class HourGlassNet:
-  def __init__(self, num_classes, num_stacks, num_filters, 
-              in_shape, out_shape, hm_activation = 'sigmoid', is_mobile = False):
-    self.num_classes = num_classes
-    self.num_stacks = num_stacks
-    self.num_filters = num_filters
-    self.in_shape = in_shape
-    self.out_shape = out_shape
-    self.hm_activation = hm_activation
-    if is_mobile:
-      self.bottleneck = create_bottleneck_mobile
-    else:
-      self.bottleneck = create_bottleneck
-    
-  
-  def create_hg_model(self):
-    self.hg = create_hourglass_network(self.in_shape, self.num_classes, self.num_stacks, 
-                            self.num_filters, self.bottleneck, self.hm_activation)
-    print(f'''Created HourGlassmodel:
-    1. {self.num_stacks} stacks.
-    2. {self.hg.count_params()} parameters. Call object.get_summary() for more detail.
-    ''')
+def create_hourglas_model(num_classes, num_stacks, num_channels, input_shape, predict_activation, mobile = False):
+  # Clear
+  K.clear_session()
 
-    return self.hg
-  
-  def get_summary(self):
-    self.hg.summry()
+  bottleneck = bottleneck_block
+  if mobile:
+    bottleneck = bottleneck_block_mobile
 
-
-'''
-  TODO: should probably put everything in a class
-'''
-
-def create_hourglass_network(input_shape, num_classes, num_stacks, num_filters, bottleneck, hm_activation) -> Model:
-  assert hm_activation == 'sigmoid' or hm_activation == 'linear'
-  #clear last session
-  K.clear_session() 
   _input = Input(shape = input_shape)
-  front_features = create_front_module(_input, num_filters, bottleneck)
 
+  # Front module, reduce 1/4 resolution
+  front_features = create_front_module(_input, num_channels, bottleneck)
+
+  # Stack
   head_next_stage = front_features
-
   outputs = []
   for i in range(num_stacks):
-    hg_output = create_hourglass_module(head_next_stage, num_filters, bottleneck, i + 1)
-    head_next_stage, head_loss = create_heads(head_next_stage, hg_output, num_classes, num_filters, hm_activation, i + 1)
-    outputs.append(head_loss)
+    head_next_stage, head_to_loss = hourglass_module(head_next_stage, num_classes, num_channels, bottleneck, i, predict_activation)
+    outputs.append(head_to_loss)
+
+  model = Model(inputs=_input, outputs=outputs)
+
+  print(f'''Created Hourglass model:
+    1. {num_stacks} stacks.
+    2. {model.count_params()} parameters. Call model.get_summary() for more detail.
+    ''')
+
+  return model  
   
-  model = Model(inputs = _input, outputs = outputs)
-  return model
 
-def ConvBlock(_input, num_filters, kernel_size, name, is_mobile = False):
+def hourglass_module(x, num_classes, num_channels, bottleneck, hg_id, predict_activation):
+  '''
+    A single hourglass module
+    Input of this module should have the resolution of (64, 64)
+    1. Downsampling to 1/8
+    2. Upsampling back to original
+    3. Generate 2 heads: one for loss, one for next hourglass module
+  '''
+  # Down sample features f1, f2, f4, f8
+  downsample_features = create_downsample_blocks(x, bottleneck, hg_id, num_channels)
+
+  # Upsample features and merge with down sample features
+  upsample_feature = create_upsample_blocks(downsample_features, bottleneck, hg_id, num_channels)
+
+  # Heads
+  head_next_stage, head_predict = create_heads(x, upsample_feature, num_classes, hg_id, num_channels, predict_activation)
+
+  return head_next_stage, head_predict
+
+def create_front_module(_input, num_channels, bottleneck):
+  '''
+    One done once, at the very beginning
+    From (256, 256) -> (64, 64)
+  '''
+  _x = Conv2D(64, kernel_size=(7, 7), strides=(2, 2), padding='same', activation='relu', name='front_conv_1x1_1')(_input)
+  _x = BatchNormalization()(_x)
+
+  _x = bottleneck(_x, num_channels//2, 'front_bottleneck_1')
+  _x = MaxPool2D(pool_size=(2, 2), strides=(2, 2))(_x)
+
+  _x = bottleneck(_x, num_channels//2, 'front_bottleneck_2')
+  _x = bottleneck(_x, num_channels, 'front_bottleneck_3')
+
+  return _x
+
+
+def create_heads(x, upsample_feature_f1, num_classes, hg_id, num_channels, predict_activation: str):
+  '''
+    Create two heads: one for loss, one for the next hourglass
+    x should be the input of the hourglass module
+  '''
+
+  name = 'hg' + str(hg_id)
+
+  head = Conv2D(num_channels, kernel_size=(1, 1), activation='relu', padding='same', name=name+'_conv_1x1_1')(upsample_feature_f1)
+  head = BatchNormalization()(head)
+
+  # For prediction and loss calculation
+  head_predict = Conv2D(num_classes, kernel_size=(1, 1), activation=predict_activation, padding='same', name=name+'_conv_1x1_predict')(head)
+
+  # Heads for adding
+  # use linear activation
+  head = Conv2D(num_channels, kernel_size=(1, 1), activation='linear', padding='same', name=name+'_conv_1x1_2')(head)
+  head_m = Conv2D(num_channels, kernel_size=(1, 1), activation='linear', padding='same', name=name+'_conv_1x1_3')(head_predict)
+
+  # add all
+  head_next_stage = Add()([head, head_m, x])
   
-  if is_mobile:
-     x = SeparableConv2D(filters = num_filters, kernel_size = kernel_size, activation = 'relu', 
-                          padding = 'same', name = name + '_conv')(_input)
-  else:
-    x = Conv2D(filters = num_filters, kernel_size = kernel_size, activation = 'relu',
-                padding = 'same', name = name + '_conv')(_input)
+  return head_next_stage, head_predict
 
-  x = BatchNormalization(name = name + '_bn')(x)
-    
-  return x
 
-def create_bottleneck(_input, num_filters, name: str):
+def create_upsample_blocks(downsample_features, bottleneck, hg_id, num_channels):
   '''
-  :param _input: input
-  :param num_filters: number of filters at output of the bottleneck
-  :param name:
+    Upsampling and merging accordingly to the scale:
+
+    - downsample_f1 feature: 64 x 64 x num_channels
+    - downsample_f2 feature: 32 x 32 x num_channels
+    - downsample_f4 feature: 16 x 16 x num_channels
+    - downsample_f8 feature: 8 x 8 x num_channels
+  
+    - upsample_f8 feature: 8 x 8 x num_channels
+    - upsample_f4 feature: 16 x 16 x num_channels
+    - upsample_f2 feature: 32 x 32 x num_channels
+    - upsample_f1 feature: 64 x 64 x num_channels
+
   '''
+  name = 'hg' + str(hg_id)
 
-  # Skip layer, if the number of output filters of input is not match with the current bottleneck
-  # Map it with a 1x1 ConvD, otherwise keep
-  if K.int_shape(_input)[-1] == num_filters:
-    skip = _input
-  else:
-    skip = Conv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', activation = 'relu', name = name + '_skip_conv')(_input)
+  downsample_f1, downsample_f2, downsample_f4, downsample_f8 = downsample_features
 
-  x = ConvBlock(_input = skip, num_filters = num_filters//2, kernel_size = (1, 1), name = name + '_convblock1')
-  x = ConvBlock(_input = x, num_filters = num_filters//2, kernel_size = (3, 3), name = name + '_convblock2')
-  x = ConvBlock(_input = x, num_filters = num_filters, kernel_size = (1, 1), name = name + '_convblock3')
-  x = Add(name = name + '_output')([skip, x])
+  upsample_f8 = bottom_block(downsample_f8, bottleneck, hg_id, num_channels)
+  upsample_f4 = connect_downsample_upsample(downsample_f4, upsample_f8, bottleneck, num_channels, name +'_upsample_f4')
+  upsample_f2 = connect_downsample_upsample(downsample_f2, upsample_f4, bottleneck, num_channels, name +'_upsample_f2')
+  upsample_f1 = connect_downsample_upsample(downsample_f1, upsample_f2, bottleneck, num_channels, name +'_upsample_f1')
 
-  return x
+  return upsample_f1
 
-def create_bottleneck_mobile(_input, num_filters, name: str):
+
+def bottom_block(downsample_f8, bottleneck, hg_id, num_channels):
   '''
-  :param _input: input
-  :param num_filters: number of filters at output of the bottleneck
-  :param name:
+    In the lowest resolution (8, 8)
+    CARE: in the orginal paper there is more one round of maxpool which the lowest is (4, 4)
+    1. 1 bottleneck for shortcut
+    2. 3 bottlenecks for main branch
+    3. Add
   '''
+  name = 'hg' + str(hg_id)
 
-  # Skip layer, if the number of output filters of input is not match with the current bottleneck
-  # Map it with a 1x1 ConvD, otherwise keep
-  if K.int_shape(_input)[-1] == num_filters:
-    skip = _input
-  else:
-    skip = SeparableConv2D(filters = num_filters, kernel_size = (1, 1), padding = 'same', activation = 'relu', name = name + '_skip_conv')(_input)
+  downsample_f8_short = bottleneck(downsample_f8, num_channels, name + '_downsample_f8_short')
 
-  x = ConvBlock(_input = skip, num_filters = num_filters//2, kernel_size = (1, 1), name = name + '_convblock1', is_mobile = True)
-  x = ConvBlock(_input = x, num_filters = num_filters//2, kernel_size = (3, 3), name = name + '_convblock2', is_mobile = True)
-  x = ConvBlock(_input = x, num_filters = num_filters, kernel_size = (1, 1), name = name + '_convblock3', is_mobile = True)
-  x = Add(name = name + '_output_mobile')([skip, x])
+  _x = bottleneck(downsample_f8_short, num_channels, name + '_downsample_f8_1')
+  _x = bottleneck(_x, num_channels, name + '_downsample_f8_2')
+  _x = bottleneck(_x, num_channels, name + '_downsample_f8_3')
 
-  return x
+  upsample_f8 =  Add(name = name + '_downsample_upsample_f8')([_x, downsample_f8_short])
 
-def create_front_module(_input, num_filters, bottleneck):
-  ''' Frond module
-  7x7 conv2D -> 1/2 res
-  1 bottleneck
-  1 maxpool -> 1/2 res
-  2 bottleneck
-  output resolution should match with label resolution (.e.i 64x64)
+  return upsample_f8
+
+
+def connect_downsample_upsample(downsample_feature, upsample_feature, bottleneck, num_channels, name):
   '''
-
-  x = Conv2D(filters = num_filters//4,  kernel_size = (7, 7), strides = (2, 2), activation = 'relu', padding = 'same', name = 'front_conv')(_input)
-  x = BatchNormalization(name = 'front_bn')(x)
-
-  x = bottleneck(x, num_filters//2, 'front_bottleneck1')
-  x = MaxPool2D(pool_size = (2, 2), strides = (2, 2), name = 'front_maxpool')(x)
-  x = bottleneck(x, num_filters//2, 'front_bottleneck2')
-  x = bottleneck(x, num_filters, 'front_bottleneck3')
-
-  return x
-
-def create_hourglass_module(_input, num_filters, bottleneck, hgid: int):
-  ''' Hourglass module
-  4 downsampling + 4 upscaling
-  lf1, lf2, lf3, lf4: 1, 1/2, 1/4, 1/8
+    Add the same scale downsample and up sample
+    1. Apply 1 bottleneck for the downsample (if u see the figure its the connection up the air)
+    2. Upscaling the upsample, which is lower then current down feature
+    3. Add
+    4. Apply one more bottleneck
   '''
-  name = 'hg' + str(hgid)
-  # Left features
-  lf1 = Lambda(lambda x: x, name = name + '_lf1')(_input)# rename
+  downsample_x = bottleneck(downsample_feature, num_channels, name + '_short') # shortcut
+  upsample_x = UpSampling2D()(upsample_feature)
+  # Add both
+  _x = Add()([downsample_x, upsample_x])
+  _x = bottleneck(_x, num_channels, name + '_merged')
+  
+  return _x
+  
 
-  lf2 = MaxPool2D(pool_size = (2, 2), strides = (2, 2), name = name + '_lf2_maxpool')(lf1)
-  lf2 = bottleneck(lf2, num_filters, name = name + '_lf2_bottleneck')
+def create_downsample_blocks(x, bottleneck, hg_id, num_channels):
+  '''
+    Create 4 downsample blocks for 4 levels:
+      dowsample_f1 feature: 64 x 64 x num_channels
+      dowsample_f2 feature: 32 x 32 x num_channels
+      dowsample_f4 feature: 16 x 16 x num_channels
+      dowsample_f8 feature: 8 x 8 x num_channels
+  '''
+  name = 'hg' + str(hg_id)
+  
+  downsample_f1 = bottleneck(x, num_channels, name + '_downsample_f1')
+  _x = MaxPool2D(pool_size=(2, 2), strides=(2, 2))(downsample_f1)
+  
+  downsample_f2 = bottleneck(_x, num_channels, name + '_downsample_f2')
+  _x = MaxPool2D(pool_size=(2, 2), strides=(2, 2))(downsample_f2)
 
-  lf3 = MaxPool2D(pool_size = (2, 2), strides = (2, 2), name = name + '_lf3_maxpool')(lf2)
-  lf3 = bottleneck(lf3, num_filters, name = name + '_lf3_bottleneck')
+  downsample_f4 = bottleneck(_x, num_channels, name + '_downsample_f4')
+  _x = MaxPool2D(pool_size=(2, 2), strides=(2, 2))(downsample_f4)
 
-  lf4 = MaxPool2D(pool_size = (2, 2), strides = (2, 2), name = name + '_lf4_maxpool')(lf3)
-  lf4 = bottleneck(lf4, num_filters, name = name + '_lf4_bottleneck')
+  downsample_f8 = bottleneck(_x, num_channels, name + '_downsample_f8')
 
-  # Bottom layer
-  bottom = MaxPool2D(pool_size = (2, 2), strides = (2, 2), name = name + '_bottomlayer_maxpool')(lf4)
-  bottom = bottleneck(bottom, num_filters, name = name + '_bottomlayer_bottleneck1')
-  bottom = bottleneck(bottom, num_filters, name = name + '_bottomlayer_bottleneck2')
-  bottom = bottleneck(bottom, num_filters, name = name + '_bottomlayer_bottleneck3')
-  bottom = UpSampling2D(name = name + '_bottomlayer_upsampling')(bottom)
+  return (downsample_f1, downsample_f2, downsample_f4, downsample_f8)
 
-  # Connect left to right
-  connect1 = bottleneck(lf1, num_filters, name = name + '_connect1_bottleneck')
-  connect2 = bottleneck(lf2, num_filters, name = name + '_connect2_bottleneck')
-  connect3 = bottleneck(lf3, num_filters, name = name + '_connect3_bottleneck')
-  connect4 = bottleneck(lf4, num_filters, name = name + '_connect4_bottleneck')
 
-  # Right features from 4 -> 1
-  rf4 = Add(name = name + '_rf4')([bottom, connect4])
-
-  rf3 = bottleneck(rf4, num_filters, name = name + '_rf3_bottlebeck')
-  rf3 = UpSampling2D(name = name + '_rf3_upsampling')(rf3)
-  rf3 = Add(name = name + '_rf3')([rf3, connect3])
-
-  rf2 = bottleneck(rf3, num_filters, name = name + '_rf2_bottlebeck')
-  rf2 = UpSampling2D(name = name + '_rf2_upsampling')(rf2)
-  rf2 = Add(name = name + '_rf2')([rf2, connect2])
-
-  rf1 = bottleneck(rf2, num_filters, name = name + '_rf1_bottlebeck')
-  rf1 = UpSampling2D(name = name + '_rf1_upsampling')(rf1)
-  rf1 = Add(name = name + '_rf1')([rf1, connect1])
-
-  return rf1
-
-def create_heads(hg_input, hg_output, num_classes, num_filters, hm_activation, hgid: int):
+def bottleneck_block(x, num_out_channels, name):
   ''''
-  2 heads: 1 for heatmaps/label -> loss, 1 for next hourglass
-  :param hg_input: input of the hourglass
-  :param hg_output: right feature 1
-  :param num_classes: num of kpts
-  :param num_filters:
-  :param hm_activation: either linear or sigmoid
-  :param hgid: for naming
+    Standard bottle neck block, using standard conv
   '''
-  name = 'head' + str(hgid)
 
-  head = ConvBlock(_input = hg_output, num_filters = num_filters, kernel_size = (1, 1), name = name + '_convblock')
+  # Skip layer, to map if number of input channels is diff than output
+  if K.int_shape(x)[-1] == num_out_channels:
+    _skip = x
+  else:
+    _skip = Conv2D(filters=num_out_channels, kernel_size=(1, 1), activation='relu', padding='same', name=name + '_skip')(x)
 
-  # for intermediate supervision
-  head_loss = Conv2D(filters = num_classes, kernel_size = (1, 1), activation = hm_activation, padding = 'same',
-                     name = 'heatmap' + str(hgid))(head)
+  # 3 convs: num_out_channels/2, num_out_channels/2, num_out_channels/2
+  _x = Conv2D(filters=num_out_channels//2, kernel_size=(1, 1), activation='relu', padding='same', name=name + '_conv_1x1_1')(x)
+  _x = BatchNormalization()(_x)
+  _x = Conv2D(filters=num_out_channels//2, kernel_size=(3, 3), activation='relu', padding='same', name=name + '_conv_3x3_2')(_x)
+  _x = BatchNormalization()(_x)
+  _x = Conv2D(filters=num_out_channels, kernel_size=(1, 1), activation='relu', padding='same', name=name + '_conv_1x1_3')(_x)
+  _x = BatchNormalization()(_x)
 
-  # map head_loss for next stage, default linar activation
-  head_m = Conv2D(filters = num_filters, kernel_size = (1, 1), activation = 'linear', padding = 'same', name = name + '_conv2')(head_loss)
-  # head for next stage
-  head =  Conv2D(filters = num_filters, kernel_size = (1, 1), activation = 'linear', padding = 'same', name = name + '_conv3')(head)
+  # Merge
+  _x = Add(name=name + '_add')([_skip, _x])
 
-  head_next_stage = Add(name = name + '_next_stage')([hg_input, head_m, head])
+  return _x
 
-  return head_next_stage, head_loss
+
+def bottleneck_block_mobile(x, num_out_channels, name):
+  ''''
+    Mobile bottle neck block, using separable conv, lightweight
+  '''
+
+  # Skip layer, to map if number of input channels is diff than output
+  if K.int_shape(x)[-1] == num_out_channels:
+    _skip = x
+  else:
+    _skip = SeparableConv2D(filters=num_out_channels, kernel_size=(1, 1), activation='relu', padding='same', name=name + '_skip')(x)
+
+  # 3 convs: num_out_channels/2, num_out_channels/2, num_out_channels/2
+  _x = SeparableConv2D(filters=num_out_channels//2, kernel_size=(1, 1), activation='relu', padding='same', name=name + '_conv_1x1_1')(x)
+  _x = BatchNormalization()(_x)
+  _x = SeparableConv2D(filters=num_out_channels//2, kernel_size=(3, 3), activation='relu', padding='same', name=name + '_conv_3x3_2')(_x)
+  _x = BatchNormalization()(_x)
+  _x = SeparableConv2D(filters=num_out_channels, kernel_size=(1, 1), activation='relu', padding='same', name=name + '_conv_1x1_3')(_x)
+  _x = BatchNormalization()(_x)
+
+  # Merge
+  _x = Add(name=name + '_add')([_skip, _x])
+
+  return _x
