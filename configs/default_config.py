@@ -15,9 +15,10 @@ LABEL_HEIGHT = 64
 LABEL_SHAPE  = (LABEL_HEIGHT, LABEL_WIDTH, NUM_KEYPOINTS)
 GAUSSIAN_KERNEL = 7
 HM_ACTIVATION = 'sigmoid'
+
 # hourglass settings
-HG_NUM_FILTERS = 256 # only used inside hg module
-HG_NUM_STACKS = 4
+HG_NUM_CHANNELS = 256 # only used inside hg module
+HG_NUM_STACKS = 2
 
 
 # Training seting
