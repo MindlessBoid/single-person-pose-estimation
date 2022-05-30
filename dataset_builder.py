@@ -4,6 +4,7 @@ import cv2
 import imgaug as ia
 import imgaug.augmenters as iaa
 from imgaug.augmentables import Keypoint, KeypointsOnImage
+from utils import generate_2d_guassian
 
 class DatasetBuilder:
   def __init__(self, config, ratio = 1):
@@ -35,85 +36,84 @@ class DatasetBuilder:
     ds_train = tf.data.TFRecordDataset(self.train_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) #create dataset
     ds_train = ds_train.shuffle(self.shuffle_buffer) 
     ds_train = ds_train.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
-    ds_train = ds_train.map(self.prepare_train_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds_train = ds_train.map(self.prepare_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds_train = ds_train.map(self.make_train_label, num_parallel_calls = tf.data.experimental.AUTOTUNE)
     ds_train = ds_train.batch(self.batch_size) #batch after shuffling to get unique batches at each epoch
     ds_train = ds_train.repeat()
     ds_train = ds_train.prefetch(tf.data.experimental.AUTOTUNE)#good practice to end the pipeline by prefetching
 
     ds_valid = tf.data.TFRecordDataset(self.valid_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) #create dataset
     ds_valid = ds_valid.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
-    ds_valid = ds_valid.map(self.prepare_valid_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds_valid = ds_valid.map(self.prepare_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds_valid = ds_valid.map(self.make_valid_label, num_parallel_calls = tf.data.experimental.AUTOTUNE)
     ds_valid = ds_valid.batch(self.batch_size) #batch after shuffling to get unique batches at each epoch
     ds_valid = ds_valid.repeat()
     ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)#good practice to end the pipeline by prefetching
 
     return ds_train, ds_valid
-  def get_ds_prediction(self, batch_size = 16) -> tf.data.Dataset:
+
+  def get_ds_prediction(self) -> tf.data.Dataset:
     ''' For prediction, using valid dataset
         Giving larger batch_size for fast prediction -> may cause OOM
     '''
-    ds_valid = tf.data.TFRecordDataset(self.valid_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) 
-    ds_valid = ds_valid.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
-    ds_valid = ds_valid.map(self.prepare_prediction_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
-    ds_valid = ds_valid.batch(batch_size) 
-    ds_valid = ds_valid.prefetch(tf.data.experimental.AUTOTUNE)
-    return ds_valid
+    ds = tf.data.TFRecordDataset(self.valid_filenames, num_parallel_reads=tf.data.experimental.AUTOTUNE) 
+    ds = ds.map(self.parse_tfrecord_fn, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds = ds.map(self.prepare_prediction_example, num_parallel_calls = tf.data.experimental.AUTOTUNE)
+    ds = ds.batch(self.batch_size) 
+    ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
+    return ds
+  
 
+  def make_train_label(self, image, kps_x, kps_y, kps_v):
 
-  def prepare_train_example(self, example):
-    # Getting all the needed data first
-    raw_image = example['image']
-    raw_image_height = example['height']
-    raw_image_width = example['width']
-    kpts_x = example['keypoints/x']
-    kpts_y = example['keypoints/y']
-
-    # Augmentation in raw image's space (shape)
-    aug_image, aug_kpts_x, aug_kpts_y = self.tf_augment(raw_image, kpts_x, kpts_y)
-    aug_image.set_shape(raw_image.get_shape()) # set the shape same so it wont appear None
-
-    # Generate heatmaps
-    # Recal x, y in heatmap's space
-    h_ratio = self.label_shape[0] / raw_image_height
-    w_ratio = self.label_shape[1] / raw_image_width
-    aug_kpts_x = aug_kpts_x * tf.cast(w_ratio, tf.float32) # in label_shape (64, 64)
-    aug_kpts_y = aug_kpts_y * tf.cast(h_ratio, tf.float32) # in label_shape (64, 64)
-
-    heatmaps = self.tf_gen_heatmaps(aug_kpts_x, aug_kpts_y)
-    
-    # resize imgage to desire size
-    aug_image = tf.image.resize(aug_image, (self.image_shape[0], self.image_shape[1]))
-    
+    # Perform augmentation 1
+    aug_image, aug_kps_x, aug_kps_y = self.tf_augment_1(image, kps_x, kps_y, kps_v)
+    # Perform augmentation 2
+    aug_image = self.augment_2(aug_image)
+    # Gen heatmaps
+    heatmaps = self.tf_gen_heatmaps(aug_kps_x, aug_kps_y)
 
     return aug_image, heatmaps
   
-  def prepare_valid_example(self, example):
-    # Getting all the needed data first
-    raw_image = example['image']
-    raw_image_height = example['height']
-    raw_image_width = example['width']
-    kpts_x = example['keypoints/x']
-    kpts_y = example['keypoints/y']
 
-    # Generate heatmaps
-    # Recal x, y in heatmap's space
-    h_ratio = self.label_shape[0] / raw_image_height
-    w_ratio = self.label_shape[1] / raw_image_width
-    kpts_x = kpts_x * tf.cast(w_ratio, tf.float32) # in label_shape (64, 64)
-    kpts_y = kpts_y * tf.cast(h_ratio, tf.float32) # in label_shape (64, 64)
+  def make_valid_label(self, image, kps_x, kps_y, kps_v):
+    # Just gen heatmaps
+    heatmaps = self.tf_gen_heatmaps(kps_x, kps_y)
 
-    heatmaps = self.tf_gen_heatmaps(kpts_x, kpts_y)
-    
-    # resize imgage to desire size
-    raw_image = tf.image.resize(raw_image, (self.image_shape[0], self.image_shape[1]))
-    
-    return raw_image, heatmaps
-  
+    return image, heatmaps
+
+
+  def prepare_example(self, example):
+    '''
+      Prepare one exmaple
+      1. Extract meta data and image
+      2. Resize the image to (256, 256)
+      3. Recalculate the keypoints into heatmap's dimension (64, 64) and throw away invalid keypoints
+      4. Return the image and x, y coordinates and visible flag (to mask later on)
+    '''
+    image = example['image']
+    image_width = example['width']
+    image_height = example['height']
+    kps_x = example['keypoints/x']
+    kps_y = example['keypoints/y']
+    kps_v = example['keypoints/vis']
+
+    # Resize the image
+    image = tf.image.resize(image, size = (self.image_shape[1], self.image_shape[0]))
+
+    # Recalculate x, y
+    kps_x /= tf.cast(image_width, dtype = tf.float32) # normalize
+    kps_y /= tf.cast(image_height, dtype = tf.float32) # normalize
+    kps_x *= self.label_shape[1]
+    kps_y *= self.label_shape[0]
+
+    return image, kps_x, kps_y, kps_v
+
   def prepare_prediction_example(self, example):
     '''
-    Basically the same with ds_valid but we dont generate heatmaps nor recalculate keypoints and get all meta data
+    Basically the same with prepare_example but we dont generate heatmaps nor recalculate keypoints and get all meta data
     '''
-    raw_image = example['image']
+    image = example['image']
 
     meta = {}
     meta['original_height'] = example['height']
@@ -130,10 +130,98 @@ class DatasetBuilder:
     meta['offset_height'] = example['offset_height'] # amount to add if the bbox out of the image 
 
     # to 256x256
-    resized_image = tf.image.resize(raw_image, (self.image_shape[0], self.image_shape[1]))
+    resized_image = tf.image.resize(image, (self.image_shape[0], self.image_shape[1]))
 
     return resized_image, meta
 
+  '''
+    Augmentation pipeline:
+    1. augment_1: Affect both keypoints and image
+      - Random rotation
+      - Random flip left-right
+      - Random scale
+      * This function uses imgaug library so need to wrap around tf_numpy_function -> slow
+    2. augment_2: only affect image
+      - Random brightness
+      - Random contrast
+      - Random hue
+      - Random saturation
+      * This one use tf.image -> faster
+  '''
+  def np_augment_1(self, image, kps_x, kps_y, kps_v):
+    '''
+      Augment the image and keypoints
+      Only augment the valid keypoints (not (0, 0)) and all keypoints has to be augemted in image shape (hasnt been resized)
+      kps_x, kps_y: x and y coordisnate in shape of (number of kps), in heatmap's space (64, 64)
+      This function is robust it already eleminates all points outside of heatmap (64, 64)
+    '''
+    imgaug_kps = [] # to store imgaug keypoint format
+    idxs = []
+    # Extract x, y and store the keypoint's index
+    for i, vis in enumerate(kps_v):
+      if vis: 
+        imgaug_kps.append(Keypoint(x = kps_x[i], y = kps_y[i]))
+        idxs.append(i)
+    kpsoi = KeypointsOnImage(imgaug_kps, shape = (self.label_shape[1], self.label_shape[0]))
+
+    #augment
+    seed = np.random.randint(2**32-1)
+    ia.seed(seed)
+    seq = iaa.Sequential([
+      iaa.Affine(scale = (0.8, 1.2), rotate = (-30, 30)),
+      iaa.Fliplr(0.5),
+      ], random_order = True) #cause rotate/scale then flip can be problematic
+    aug_img, aug_kps = seq(image = image, keypoints = kpsoi)
+
+    arr = aug_kps.to_xy_array()
+    output_kps_x = np.zeros(shape = self.num_keypoints , dtype = np.float32)
+    output_kps_y = np.zeros(shape = self.num_keypoints , dtype = np.float32)
+
+    for i, xy in zip(idxs, arr):
+      output_kps_x[i] = xy[0]
+      output_kps_y[i] = xy[1]
+    
+    return aug_img, output_kps_x, output_kps_y
+  
+  def tf_augment_1(self, image, kps_x, kps_y, kps_v):
+    return tf.numpy_function(self.np_augment_1, [image, kps_x, kps_y, kps_v], (tf.float32, tf.float32, tf.float32)) # 4 inputs, 3 outputs
+
+  def augment_2(self, image):
+    '''
+      image should be a tf.float32 tensor
+    '''
+    image = tf.image.random_brightness(image, 0.2)
+    image = tf.image.random_contrast(image, 0.5, 2.0)
+    image = tf.image.random_saturation(image, 0.75, 1.25)
+    image = tf.image.random_hue(image, 0.1)
+    image = tf.clip_by_value(image, 0.0, 1.0)
+
+    # make sure image is in range [0.0, 1.0]
+    image = tf.clip_by_value(image, 0.0, 1.0)
+    return image
+
+
+  def np_gen_heatmaps(self, kps_x, kps_y):
+    '''
+    Creates 2D heatmaps from keypoints coordinates for one single example/image
+    :param kps_x, kps_y: x and y coordisnate in shape of (number of kps)
+    :output: array of heatmaps (heatmap_width, heatmap_height, number of kps)
+    '''
+    assert len(kps_x) == len(kps_y) == self.num_keypoints
+    heatmaps = np.zeros(self.label_shape, dtype = np.float32)
+    for i in range(self.num_keypoints):
+      x = int(kps_x[i])
+      y = int(kps_y[i])
+      if 0 < x < self.label_shape[1] and 0 < y < self.label_shape[0]: 
+        heatmaps[y][x][i] = 1.0
+        heatmaps[:,:,i] = cv2.GaussianBlur(heatmaps[:,:,i], (self.gaussian_kernel, self.gaussian_kernel), 0)#blur
+        heatmaps[:,:,i] = heatmaps[:,:,i] / heatmaps[:,:,i].max()#normalize
+    return heatmaps
+
+  def tf_gen_heatmaps(self, kps_x, kps_y):
+    return tf.numpy_function(self.np_gen_heatmaps, [kps_x, kps_y], tf.float32)
+
+  # Some utils
   @staticmethod
   def parse_tfrecord_fn(example):
     '''
@@ -163,65 +251,8 @@ class DatasetBuilder:
     example["keypoints/y"] = tf.sparse.to_dense(example["keypoints/y"])
     example["keypoints/vis"] = tf.sparse.to_dense(example["keypoints/vis"])
     return example
-  
-  def np_augment(self, image, kpts_x, kpts_y):
-    '''
-    Augment the image and keypoints
-    Only augment the valid keypoints (not (0, 0)) and all keypoints has to be augemted in image shape (hasnt been resized)
-    :param kpts_x, kpts_y: x and y coordisnate in shape of (number of kpts):
-    '''
-    imgaug_kpts = [] # to store imgaug keypoint format
-    idxs = []
-    for i, kpt in enumerate(zip(kpts_x, kpts_y)):
-      if 0 < kpt[0] < image.shape[1] and 0 < kpt[1] < image.shape[0]:
-        imgaug_kpts.append(Keypoint(x = kpt[0], y = kpt[1]))
-        idxs.append(i)
-    kptsoi = KeypointsOnImage(imgaug_kpts, shape = image.shape)
 
-    #augment
-    seed = np.random.randint(2**32-1)
-    ia.seed(seed)
-    seq = iaa.Sequential([
-      iaa.Affine(scale = (0.75, 1.25), rotate = (-30, 30)),
-      iaa.Fliplr(0.5),
-      ], random_order = False) #cause rotate/scale then flip can be problematic
-    aug_img, aug_kps = seq(image = image, keypoints = kptsoi)
 
-    arr = aug_kps.to_xy_array()
-    output_kpts_x = np.zeros(shape = self.num_keypoints , dtype = np.float32)
-    output_kpts_y = np.zeros(shape = self.num_keypoints , dtype = np.float32)
-
-    for i, xy in zip(idxs, arr):
-      output_kpts_x[i] = xy[0]
-      output_kpts_y[i] = xy[1]
-    
-    return aug_img, output_kpts_x, output_kpts_y
-  
-  def tf_augment(self, image, kpts_x, kpts_y):
-    return tf.numpy_function(self.np_augment, [image, kpts_x, kpts_y], (tf.float32, tf.float32, tf.float32))
- 
-
-  def np_gen_heatmaps(self, kpts_x, kpts_y):
-    '''
-    Creates 2D heatmaps from keypoints coordinates for one single example/image
-    :param kpts_x, kpts_y: x and y coordisnate in shape of (number of kpts)
-    :output: array of heatmaps (heatmap_width, heatmap_height, number of kpts)
-    '''
-    assert len(kpts_x) == len(kpts_y) == self.num_keypoints
-    heatmaps = np.zeros(self.label_shape, dtype = np.float32)
-    for i in range(self.num_keypoints):
-      x = int(kpts_x[i])
-      y = int(kpts_y[i])
-      if 0 < x < self.label_shape[1] and 0 < y < self.label_shape[0]: 
-        heatmaps[y][x][i] = 1.0
-        heatmaps[:,:,i] = cv2.GaussianBlur(heatmaps[:,:,i], (self.gaussian_kernel, self.gaussian_kernel), 0)#blur
-        heatmaps[:,:,i] = heatmaps[:,:,i] / heatmaps[:,:,i].max()#normalize
-    return heatmaps
-
-  def tf_gen_heatmaps(self, kpts_x, kpts_y):
-    return tf.numpy_function(self.np_gen_heatmaps, [kpts_x, kpts_y], tf.float32)
-
-  # Some utils
   @staticmethod
   def get_ds_length(filenames):
     length = 0
