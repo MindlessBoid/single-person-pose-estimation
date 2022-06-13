@@ -4,7 +4,7 @@ import cv2
 import imgaug as ia
 import imgaug.augmenters as iaa
 from imgaug.augmentables import Keypoint, KeypointsOnImage
-from utils import generate_2d_guassian
+from utils import gaussian
 
 class DatasetBuilder:
   def __init__(self, config, ratio = 1):
@@ -18,6 +18,7 @@ class DatasetBuilder:
     self.label_shape = config.LABEL_SHAPE # output
     self.num_keypoints = config.NUM_KEYPOINTS
     self.gaussian_kernel = config.GAUSSIAN_KERNEL
+    self.sigma = config.HM_SIGMA
     self.batch_size = config.BATCH_SIZE
     self.shuffle_buffer = config.SHUFFLE_BUFFER
     self.train_filenames = sorted(tf.io.gfile.glob(f"{config.TRAIN_TFRECORDS_DIR}/*.tfrec"))
@@ -212,10 +213,10 @@ class DatasetBuilder:
     for i in range(self.num_keypoints):
       x = int(kps_x[i])
       y = int(kps_y[i])
-      if 0 < x < self.label_shape[1] and 0 < y < self.label_shape[0]: 
-        heatmaps[y][x][i] = 1.0
-        heatmaps[:,:,i] = cv2.GaussianBlur(heatmaps[:,:,i], (self.gaussian_kernel, self.gaussian_kernel), 0)#blur
-        heatmaps[:,:,i] = heatmaps[:,:,i] / heatmaps[:,:,i].max()#normalize
+      if 0 < x < self.label_shape[1] and 0 < y < self.label_shape[0]:
+        hm = np.zeros((self.label_shape[1], self.label_shape[0]), dtype = np.float32) 
+        heatmaps[: ,: , i] = gaussian(hm, (x, y), self.sigma)
+        heatmaps[: ,: , i] = heatmaps[:,:,i] / heatmaps[:,:,i].max()#normalize
     return heatmaps
 
   def tf_gen_heatmaps(self, kps_x, kps_y):

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from callbacks import *
 from keras import backend as K
-from loss import weighted_mean_squared_error
+from loss import weighted_mean_squared_error, IOU
 
 class Trainer:
   ''' TODO:
@@ -60,7 +60,7 @@ class Trainer:
     pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
 
     # temporary save
-    path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.ckpt'
+    path = self.checkpoints_path + f'/E{self.epochs}_{today}_cont' + '.ckpt'
     self.model.save_weights(path)
     
     print('---------------------------------------------------------')
@@ -137,7 +137,7 @@ class Trainer:
     pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
     
     # Save last
-    path = self.checkpoints_path + f'/{today}_E{self.epochs}_cont' + '.ckpt'
+    path = self.checkpoints_path + f'/E{self.epochs}_{today}_cont' + '.ckpt'
     self.model.save_weights(path)
 
     # Compare the best weights and save the better one
@@ -202,7 +202,7 @@ class Trainer:
   def get_epochs_from_name(path):
     ''' Extract the checkpoint name and the epochs number which were saved in previous trains
         ONLY get the latest checkpoint 
-        format of checkpoint file E{num_of_epochs}-{date}.ckpt.index
+        format of checkpoint file E{self.epochs}_{today}_cont.ckpt.index
     '''
     name = glob.glob(path + '/*_cont.ckpt.index')
     assert(name) # check empty
@@ -212,7 +212,7 @@ class Trainer:
     last = last.split('/')[-1] # get rid of slashes
     ckpt_name = last[:-6] # eliminate '.index', to load using keras
     
-    epochs = last.split('_')[1] # get E{epcoch}
+    epochs = last.split('_')[0] # get E{epochs}
     epochs = int(epochs[1:]) # get rid of 'E'
     
     return ckpt_name, epochs, last
@@ -226,6 +226,9 @@ class Trainer:
     elif loss_str == 'mse' or loss_str == 'mean_squared_error':
       print('Mean Squared Error')
       return tf.keras.losses.mean_squared_error
+    elif loss_str == 'iou':
+      print('IOU')
+      return IOU
     else:
       print('None')
       return None

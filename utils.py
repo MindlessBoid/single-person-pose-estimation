@@ -1,67 +1,47 @@
 import tensorflow as tf
+import numpy as np
 
-def generate_2d_guassian(height, width, y0, x0, v0, sigma=1, scale=1):
+def compile_model_from_checkpoint(model, ckpt_path, optimizer, loss):
+  ''' 
+    Usages:
+      This function to load model only so optimizer and loss dont really matter
+
+    Params:
+      model: tf model
+      ckpt_path: should be anything before and '.ckpt'
+      optimizer: 
+      loss: applied for all outputs
+
+    Returns:
+      A compiled tensorflow model
   '''
-  "The same technique as Tompson et al. is used for supervision. A MeanSquared Error (MSE) loss is
-  applied comparing the predicted heatmap to a ground-truth heatmap consisting of a 2D gaussian
-  (with standard deviation of 1 px) centered on the keypoint location."
-  https://github.com/princeton-vl/pose-hg-train/blob/master/src/util/img.lua#L204
+  model.load_weights(ckpt_path)
+  model.compile(optimizer = optimizer, loss = loss)
+  return model
 
-  Credit to: https://github.com/ethanyanjiali/deep-vision/blob/master/Hourglass/tensorflow/preprocess.py
-  Work with Tensor
-
-  '''
-  heatmap = tf.zeros((height, width))
-
-  # this gaussian patch is 7x7, let's get four corners of it first
-  xmin = x0 - 3 * sigma
-  ymin = y0 - 3 * sigma
-  xmax = x0 + 3 * sigma
-  ymax = y0 + 3 * sigma
-  # if the patch is out of image boundary we simply return nothing according to the source code
-  # [1]"In these cases the joint is either truncated or severely occluded, so for
-  # supervision a ground truth heatmap of all zeros is provided."
-  # flag 0 is not included (x=0, y=0)
-  if xmin >= width or ymin >= height or xmax < 0 or ymax <0 or v0 == 0:
-      return heatmap
-
-  size = 6 * sigma + 1
-  x, y = tf.meshgrid(tf.range(0, 6*sigma+1, 1), tf.range(0, 6*sigma+1, 1), indexing='xy')
-
-  # the center of the gaussian patch should be 1
-  center_x = size // 2
-  center_y = size // 2
-
-  # generate this 7x7 gaussian patch
-  gaussian_patch = tf.cast(tf.math.exp(-(tf.square(x - center_x) + tf.math.square(y - center_y)) / (tf.math.square(sigma) * 2)) * scale, dtype=tf.float32)
-
-  # part of the patch could be out of the boundary, so we need to determine the valid range
-  # if xmin = -2, it means the 2 left-most columns are invalid, which is max(0, -(-2)) = 2
-  patch_xmin = tf.math.maximum(0, -xmin)
-  patch_ymin = tf.math.maximum(0, -ymin)
-  # if xmin = 59, xmax = 66, but our output is 64x64, then we should discard 2 right-most columns
-  # which is min(64, 66) - 59 = 5, and column 6 and 7 are discarded
-  patch_xmax = tf.math.minimum(xmax, width) - xmin
-  patch_ymax = tf.math.minimum(ymax, height) - ymin
-
-  # also, we need to determine where to put this patch in the whole heatmap
-  heatmap_xmin = tf.math.maximum(0, xmin)
-  heatmap_ymin = tf.math.maximum(0, ymin)
-  heatmap_xmax = tf.math.minimum(xmax, width)
-  heatmap_ymax = tf.math.minimum(ymax, height)
-
-  # finally, insert this patch into the heatmap
-  indices = tf.TensorArray(tf.int32, 1, dynamic_size=True)
-  updates = tf.TensorArray(tf.float32, 1, dynamic_size=True)
-
-  count = 0
-
-  for j in tf.range(patch_ymin, patch_ymax):
-      for i in tf.range(patch_xmin, patch_xmax):
-          indices = indices.write(count, [heatmap_ymin+j, heatmap_xmin+i])
-          updates = updates.write(count, gaussian_patch[j][i])
-          count += 1
-          
-  heatmap = tf.tensor_scatter_nd_update(heatmap, indices.stack(), updates.stack())
-
-  return heatmap
+# This func is unmodified and ripped from: https://github.com/princeton-vl/pose-hg-train/blob/master/src/pypose/draw.py
+def gaussian(img, pt, sigma):
+   # Draw a 2D gaussian
+   # Check that any part of the gaussian is in-bounds
+   ul = [int(pt[0] - 3 * sigma), int(pt[1] - 3 * sigma)]
+   br = [int(pt[0] + 3 * sigma + 1), int(pt[1] + 3 * sigma + 1)]
+   if (ul[0] > img.shape[1] or ul[1] >= img.shape[0] or
+           br[0] < 0 or br[1] < 0):
+       # If not, just return the image as is
+       return img
+   # Generate gaussian
+   size = 6 * sigma + 1
+   x = np.arange(0, size, 1, float)
+   y = x[:, np.newaxis]
+   x0 = y0 = size // 2
+   # The gaussian is not normalized, we want the center value to equal 1
+   g = np.exp(- ((x - x0) ** 2 + (y - y0) ** 2) / (2 * sigma ** 2))
+   # Usable gaussian range
+   g_x = max(0, -ul[0]), min(br[0], img.shape[1]) - ul[0]
+   g_y = max(0, -ul[1]), min(br[1], img.shape[0]) - ul[1]
+   # Image range
+   img_x = max(0, ul[0]), min(br[0], img.shape[1])
+   img_y = max(0, ul[1]), min(br[1], img.shape[0])
+   img[img_y[0]:img_y[1], img_x[0]:img_x[1]
+       ] = g[g_y[0]:g_y[1], g_x[0]:g_x[1]]
+   return img

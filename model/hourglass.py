@@ -2,7 +2,7 @@ from keras.layers import Conv2D, SeparableConv2D, BatchNormalization, MaxPool2D,
 import keras.backend as K
 from keras import Model
 
-def create_hourglas_model(num_classes, num_stacks, num_channels, input_shape, predict_activation, mobile = False):
+def create_hourglass_model(num_classes, num_stacks, num_channels, input_shape, predict_activation, mobile = False):
   # Clear
   K.clear_session()
 
@@ -101,7 +101,9 @@ def create_upsample_blocks(downsample_features, bottleneck, hg_id, num_channels)
     - downsample_f2 feature: 32 x 32 x num_channels
     - downsample_f4 feature: 16 x 16 x num_channels
     - downsample_f8 feature: 8 x 8 x num_channels
-  
+
+    - bottom: 4 x 4 x num_channels
+
     - upsample_f8 feature: 8 x 8 x num_channels
     - upsample_f4 feature: 16 x 16 x num_channels
     - upsample_f2 feature: 32 x 32 x num_channels
@@ -112,7 +114,9 @@ def create_upsample_blocks(downsample_features, bottleneck, hg_id, num_channels)
 
   downsample_f1, downsample_f2, downsample_f4, downsample_f8 = downsample_features
 
-  upsample_f8 = bottom_block(downsample_f8, bottleneck, hg_id, num_channels)
+  bottom = bottom_block(downsample_f8, bottleneck, hg_id, num_channels)
+
+  upsample_f8 = connect_downsample_upsample(downsample_f8, bottom, bottleneck, num_channels, name + '_upsample_f8')
   upsample_f4 = connect_downsample_upsample(downsample_f4, upsample_f8, bottleneck, num_channels, name +'_upsample_f4')
   upsample_f2 = connect_downsample_upsample(downsample_f2, upsample_f4, bottleneck, num_channels, name +'_upsample_f2')
   upsample_f1 = connect_downsample_upsample(downsample_f1, upsample_f2, bottleneck, num_channels, name +'_upsample_f1')
@@ -122,23 +126,18 @@ def create_upsample_blocks(downsample_features, bottleneck, hg_id, num_channels)
 
 def bottom_block(downsample_f8, bottleneck, hg_id, num_channels):
   '''
-    In the lowest resolution (8, 8)
-    CARE: in the orginal paper there is more one round of maxpool which the lowest is (4, 4)
-    1. 1 bottleneck for shortcut
-    2. 3 bottlenecks for main branch
-    3. Add
+    In the lowest resolution (4, 4)
+    1. MaxPool to (4,4)
+    2. 3 bottlenecks
   '''
   name = 'hg' + str(hg_id)
 
-  downsample_f8_short = bottleneck(downsample_f8, num_channels, name + '_downsample_f8_short')
-
-  _x = bottleneck(downsample_f8_short, num_channels, name + '_downsample_f8_1')
+  _x = MaxPool2D()(downsample_f8)
+  _x = bottleneck(_x, num_channels, name + '_downsample_f8_1')
   _x = bottleneck(_x, num_channels, name + '_downsample_f8_2')
   _x = bottleneck(_x, num_channels, name + '_downsample_f8_3')
 
-  upsample_f8 =  Add(name = name + '_downsample_upsample_f8')([_x, downsample_f8_short])
-
-  return upsample_f8
+  return _x
 
 
 def connect_downsample_upsample(downsample_feature, upsample_feature, bottleneck, num_channels, name):
