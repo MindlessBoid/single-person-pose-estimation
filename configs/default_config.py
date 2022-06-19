@@ -48,3 +48,13 @@ TEMPORARY_DIR = 'temp'
 CHECKPOINTS_PATH = os.path.join(TEMPORARY_DIR, 'checkpoints')
 LOGS_PATH =  os.path.join(TEMPORARY_DIR, 'logs')
 
+# Skeleton and stuff
+COCO_INDEX_FLIP_PAIRS = [[1, 2],
+                         [3, 4],
+                         [5, 6],
+                         [7, 8],
+                         [9, 10],
+                         [11, 12],
+                         [13, 14],
+                         [15, 16]]
+
