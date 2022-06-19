@@ -104,15 +104,37 @@ def create_example(image, image_path, example, index, bbox_scale):
   kps = example['keypoints']
   #recalculate for cropping 
   # coco format (...xn, yn, vn,...)
-  xcoords = [kps[i] for i in range(len(kps)) if i%3 == 0]
-  ycoords = [kps[i] for i in range(len(kps)) if i%3 == 1]
-  xcoords = [x - bbox_x + offset_width if x > 0  else 0 for x in xcoords]
-  ycoords = [y - bbox_y + offset_height if y > 0  else 0 for y in ycoords]
+  xs = [kps[i] for i in range(len(kps)) if i%3 == 0]
+  ys = [kps[i] for i in range(len(kps)) if i%3 == 1]
+  vs = [int(kps[i]) for i in range(len(kps)) if i%3 == 2]
+
+  # filter xs, ys, vis: only take ones inside the box and vis > 0
+  # some keypoints still can be outside of the adjusted box -> set vis flag = 0
+  filtered_xs = []
+  filtered_ys = []
+  filtered_vs = []
+  for x, y, v in zip(xs, ys, vs):
+    x = x - bbox_x + offset_width
+    y = y - bbox_y + offset_height
+    if 0 <= x < target_width and 0 <= y < target_height and v > 0:
+      filtered_xs.append(x)
+      filtered_ys.append(y)
+      filtered_vs.append(v)
+    else:
+      filtered_xs.append(0)
+      filtered_ys.append(0)
+      filtered_vs.append(0)
+
+  #xcoords = [x - bbox_x + offset_width if x > 0  else 0 for x in xcoords]
+  #ycoords = [y - bbox_y + offset_height if y > 0  else 0 for y in ycoords]
 
   #visibility flag
-  vis = [int(kps[i]) for i in range(len(kps)) if i%3 == 2]
-  num = example['num_keypoints']
-  
+ 
+
+  # Number of keypoints
+  kps_vis = list(map(lambda v: v>0, filtered_vs))
+  num_kps = sum(kps_vis)
+
   ## Annotation id, unique for each example
   ann_id = example['ann_id']
 
@@ -131,10 +153,10 @@ def create_example(image, image_path, example, index, bbox_scale):
         "coco_url": bytes_feature(coco_url),
         "width": int64_feature(int(target_width)), # since we crop and pad
         "height": int64_feature(int(target_height)), # since we crop and pad
-        "keypoints/x": float_feature_list(xcoords),
-        "keypoints/y": float_feature_list(ycoords),
-        "keypoints/vis": int64_feature_list(vis),
-        "keypoints/num": int64_feature(num),
+        "keypoints/x": float_feature_list(filtered_xs),
+        "keypoints/y": float_feature_list(filtered_ys),
+        "keypoints/vis": int64_feature_list(filtered_vs),
+        "keypoints/num": int64_feature(num_kps),
         "bbox_x": float_feature(bbox_x),
         "bbox_y": float_feature(bbox_y),
         "offset_width": float_feature(offset_width),

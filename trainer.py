@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from callbacks import *
 from keras import backend as K
-from loss import weighted_mean_squared_error, IOU
+from loss import weighted_mse, IOU, weighed_keypoint_mse
 
 class Trainer:
   ''' TODO:
@@ -222,20 +222,23 @@ class Trainer:
     loss_str = loss_str.lower()
     if loss_str == 'weighted_mse' or loss_str == 'weight_mean_squared_error':
       print('Weighed Mean Squared Error')
-      return weighted_mean_squared_error
+      return weighted_mse
+
     elif loss_str == 'mse' or loss_str == 'mean_squared_error':
       print('Mean Squared Error')
       return tf.keras.losses.mean_squared_error
+
     elif loss_str == 'iou':
-      print('IOU')
+      print('Intersection over union')
       return IOU
+
+    elif loss_str == 'weighted_keypoint_mse':
+      print('Weighted keypoint mean squared error')
+      return weighed_keypoint_mse
+
     else:
       print('None')
       return None
-
-
-
-
 
 
 

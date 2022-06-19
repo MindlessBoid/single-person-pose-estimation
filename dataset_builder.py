@@ -1,10 +1,11 @@
 import tensorflow as tf
 import numpy as np
+import random
 import cv2
 import imgaug as ia
 import imgaug.augmenters as iaa
 from imgaug.augmentables import Keypoint, KeypointsOnImage
-from utils import gaussian
+from utilities.data_utils import gaussian
 
 class DatasetBuilder:
   def __init__(self, config, ratio = 1):
@@ -19,6 +20,7 @@ class DatasetBuilder:
     self.num_keypoints = config.NUM_KEYPOINTS
     self.gaussian_kernel = config.GAUSSIAN_KERNEL
     self.sigma = config.HM_SIGMA
+    self.index_flip_pairs = config.COCO_INDEX_FLIP_PAIRS
     self.batch_size = config.BATCH_SIZE
     self.shuffle_buffer = config.SHUFFLE_BUFFER
     self.train_filenames = sorted(tf.io.gfile.glob(f"{config.TRAIN_TFRECORDS_DIR}/*.tfrec"))
@@ -157,30 +159,42 @@ class DatasetBuilder:
       This function is robust it already eleminates all points outside of heatmap (64, 64)
     '''
     imgaug_kps = [] # to store imgaug keypoint format
-    idxs = []
-    # Extract x, y and store the keypoint's index
-    for i, vis in enumerate(kps_v):
-      if vis: 
-        imgaug_kps.append(Keypoint(x = kps_x[i], y = kps_y[i]))
-        idxs.append(i)
-    kpsoi = KeypointsOnImage(imgaug_kps, shape = (self.label_shape[1], self.label_shape[0]))
+    for x, y, v in zip(kps_x, kps_y, kps_v):
+      if v: # not necessary but just for sure
+        imgaug_kps.append(Keypoint(x=x, y=y))
+      else:
+        imgaug_kps.append(Keypoint(x=0.0, y=0.0))
+    kpsoi = KeypointsOnImage(imgaug_kps, shape = (self.label_shape[1], self.label_shape[0], 3))
 
-    #augment
+    ## Augment
     seed = np.random.randint(2**32-1)
     ia.seed(seed)
-    seq = iaa.Sequential([
-      iaa.Affine(scale = (0.8, 1.2), rotate = (-30, 30)),
-      iaa.Fliplr(0.5),
-      ], random_order = True) #cause rotate/scale then flip can be problematic
-    aug_img, aug_kps = seq(image = image, keypoints = kpsoi)
+
+    flipped_img, flipped_kpsoi = image, kpsoi
+    # FlipLR
+    flip_flag = random.choice([0, 1])
+    if flip_flag:
+      flip = iaa.Fliplr(1.0)
+      flipped_img, flipped_kpsoi = flip(image=image, keypoints=kpsoi)
+      flipped_kpsoi = self.flip_labels(flipped_kpsoi, self.index_flip_pairs)
+
+    # Affine
+    aff = iaa.Affine(scale = (0.75, 1.25), rotate = (-30, 30))
+    aug_img, aug_kps = aff(image = flipped_img, keypoints = flipped_kpsoi)
+
 
     arr = aug_kps.to_xy_array()
     output_kps_x = np.zeros(shape = self.num_keypoints , dtype = np.float32)
     output_kps_y = np.zeros(shape = self.num_keypoints , dtype = np.float32)
 
-    for i, xy in zip(idxs, arr):
-      output_kps_x[i] = xy[0]
-      output_kps_y[i] = xy[1]
+    for i in range(self.num_keypoints):
+      if kps_v[i]: # use vis to filtered out augmented (0, 0) keypointed
+        output_kps_x[i] = arr[i, 0]
+        output_kps_y[i] = arr[i, 1]
+      else:
+        output_kps_x[i] = 0.0
+        output_kps_y[i] = 0.0
+    # TODO: prob should deal with augmented keypoitsn out of image but heatmap fucntion takes care of it for now
     
     return aug_img, output_kps_x, output_kps_y
   
@@ -195,11 +209,12 @@ class DatasetBuilder:
     image = tf.image.random_contrast(image, 0.5, 2.0)
     image = tf.image.random_saturation(image, 0.75, 1.25)
     image = tf.image.random_hue(image, 0.1)
-    image = tf.clip_by_value(image, 0.0, 1.0)
 
     # make sure image is in range [0.0, 1.0]
-    image = tf.clip_by_value(image, 0.0, 1.0)
-    return image
+    # tf.clip_by_value(image, 0.0, 1.0)
+    max_val = tf.reduce_max(image)
+    min_val = tf.reduce_min(image)
+    return (image - min_val)/(max_val - min_val) # clip
 
 
   def np_gen_heatmaps(self, kps_x, kps_y):
@@ -214,9 +229,9 @@ class DatasetBuilder:
       x = int(kps_x[i])
       y = int(kps_y[i])
       if 0 < x < self.label_shape[1] and 0 < y < self.label_shape[0]:
-        hm = np.zeros((self.label_shape[1], self.label_shape[0]), dtype = np.float32) 
-        heatmaps[: ,: , i] = gaussian(hm, (x, y), self.sigma)
-        heatmaps[: ,: , i] = heatmaps[:,:,i] / heatmaps[:,:,i].max()#normalize
+        heatmaps[y][x][i] = 1.0
+        heatmaps[:,:,i] = gaussian(heatmaps[:,:,i], (x, y))
+        heatmaps[:,:,i] = heatmaps[:,:,i] / heatmaps[:,:,i].max()#normalize
     return heatmaps
 
   def tf_gen_heatmaps(self, kps_x, kps_y):
@@ -252,6 +267,36 @@ class DatasetBuilder:
     example["keypoints/y"] = tf.sparse.to_dense(example["keypoints/y"])
     example["keypoints/vis"] = tf.sparse.to_dense(example["keypoints/vis"])
     return example
+
+  @staticmethod
+  def flip_labels(imgaug_kpsoi, flip_index_pairs):
+    '''
+      Usages:
+        Use to flip the labels
+        For example,
+        [nose, left_eye, right_eye, ...] -> [nose, right_eye, left_eye, ...]
+      
+      Params:
+        imgaug_kpsoi: KeypointOnImage of imgaug
+        flip_index_pairs: index pair to swap 
+
+      Returns:
+        KeypointOnImage
+    '''
+    shape = imgaug_kpsoi.shape
+    xs = imgaug_kpsoi.to_xy_array()[:, 0]
+    ys = imgaug_kpsoi.to_xy_array()[:, 1]
+
+    for index_pair in flip_index_pairs:
+      xs[index_pair[0]], xs[index_pair[1]] = xs[index_pair[1]], xs[index_pair[0]]
+      ys[index_pair[0]], ys[index_pair[1]] = ys[index_pair[1]], ys[index_pair[0]]
+
+    imgaug_kps = []
+    for x, y in zip(xs, ys):
+      imgaug_kps.append(Keypoint(x, y))
+    
+    kpsoi = KeypointsOnImage(imgaug_kps, shape = shape)
+    return kpsoi
 
 
   @staticmethod
