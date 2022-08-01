@@ -2,18 +2,15 @@
 
 ## Introduction
 
-----
 This repository is a Tensorflow implementation of the [Stack-Hourglass Network](https://arxiv.org/abs/1603.06937). COCO dataset is used for training and evalutation.
 
 ## Stacked Hourglass Architecture
 
-----
 ![Stacked Hourglass module from the paper](/figures/shn_paper.PNG)
 ![Stacked Hourglass module](/figures/hourglass_module.png)
 
 ## Guide on train/evaluation/demo
 
-----
 argparse has not been supported yet. It is recommended to run everything in Google Colab. Notebooks which were used for testing and development process can be found in ` dev` folder. Settings can be adjusted in `configs` folder.
 
 # Train
@@ -33,7 +30,6 @@ argparse has not been supported yet. It is recommended to run everything in Goog
 
 ## Evaluation
 
-----
 * Available metrics: OKS and PCK.
 * Heatmaps for train dataset:
 ![ds_train_image_kps](/figures/ds_train_image_kps.png)
@@ -46,8 +42,6 @@ argparse has not been supported yet. It is recommended to run everything in Goog
 * For more details: `evaluation.ipynb`.
 
 ## Demo
-
-----
 
 * For person detector I use YOLOv5.
 * Demo images:
