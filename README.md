@@ -35,9 +35,13 @@ argparse has not been supported yet. It is recommended to run everything in Goog
 
 ----
 * Available metrics: OKS and PCK.
+* Heatmaps for train dataset:
 ![ds_train_image_kps](/figures/ds_train_image_kps.png)
+* Heatmaps for valid dataset:
 ![ds_valid_image_kps](/figures/ds_valid_image_kps.png)
+* OKS evalutation:
 ![OKS evaluation](/figures/OKS.PNG)
+* PCK evaluation:
 ![PCK evaluation](/figures/PCK.PNG)
 * For more details: `evaluation.ipynb`.
 
@@ -46,9 +50,10 @@ argparse has not been supported yet. It is recommended to run everything in Goog
 ----
 
 * For person detector I use YOLOv5.
-* For webcam, I obtain input through browser, therefore there is boilerplate for JavaScript. Prop to [The AI Guy](https://www.youtube.com/watch?v=YjWh7QvVH60).
+* Demo images:
 ![Demo image](/demo_images/ballet_detected.png)
 ![Demo image](/demo_images/walking_detected.png)
+* For webcam, I obtain input through browser, therefore there is boilerplate for JavaScript. Prop to [The AI Guy](https://www.youtube.com/watch?v=YjWh7QvVH60).
 * For more details: `demo.ipynb.`
 
 Speical thanks to M. for helping me during the process.
