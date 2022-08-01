@@ -57,7 +57,7 @@ class Trainer:
     end = time.time()
     if not os.path.exists(self.logs_path):
       os.makedirs(self.logs_path)
-    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
+    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_E{self.epochs}_lr{self.learning_rate}.csv")
 
     # temporary save
     path = self.checkpoints_path + f'/E{self.epochs}_{today}_cont' + '.ckpt'
@@ -134,7 +134,7 @@ class Trainer:
     end = time.time()
     if not os.path.exists(self.logs_path):
       os.makedirs(self.logs_path)
-    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_{today}_E{self.epochs}_lr{self.learning_rate}.csv")
+    pd.DataFrame(H.history).to_csv(self.logs_path + f"/log_E{self.epochs}_lr{self.learning_rate}.csv")
     
     # Save last
     path = self.checkpoints_path + f'/E{self.epochs}_{today}_cont' + '.ckpt'
@@ -154,6 +154,8 @@ class Trainer:
 
     if curr_min_val_loss < prev_min_val_loss:
       print('Current best val_loss is lower/better than previous best val_loss')
+      print(f'Old best: {prev_min_val_loss}')
+      print(f'New best: {curr_min_val_loss}')
       if os.path.exists(best_data) and os.path.exists(best_index) and os.path.exists(temp_data) and os.path.exists(temp_index):
         os.remove(best_data)
         os.remove(best_index)
@@ -206,7 +208,9 @@ class Trainer:
     '''
     name = glob.glob(path + '/*_cont.ckpt.index')
     assert(name) # check empty
-    name.sort()
+
+    # works but kinda f up to read
+    name.sort(key=lambda s: int(s.split('/')[-1].split('_')[0][1:])) # sort by E{epochs}
 
     last = name[-1] #last in the list 
     last = last.split('/')[-1] # get rid of slashes

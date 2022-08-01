@@ -1,5 +1,5 @@
 import os
-
+import numpy as np
 # Dataset configs
 NUM_KEYPOINTS = 17 # COCO number of keypoints per person
 MIN_NUM_KEYPOINTS = 5 # min number of keypoitsn one person MUST have
@@ -57,4 +57,43 @@ COCO_INDEX_FLIP_PAIRS = [[1, 2],
                          [11, 12],
                          [13, 14],
                          [15, 16]]
+COCO_KEYPOINT_LABELS = ["nose", 
+                        "left_eye", "right_eye", 
+                        "left_ear", "right_ear", 
+                        "left_shoulder", "right_shoulder", 
+                        "left_elbow", "right_elbow", 
+                        "left_wrist", "right_wrist", 
+                        "left_hip", "right_hip", 
+                        "left_knee", "right_knee", 
+                        "left_ankle", "right_ankle"]
+#https://matplotlib.org/stable/gallery/color/named_colors.html
+COCO_KEYPOINT_COLORS = ['red',
+                        'brown', 'chocolate',
+                        'orange', 'tan',
+                        'lime', 'teal',
+                        'navy', 'violet',
+                        'black', 'coral',
+                        'yellow', 'gold',
+                        'cyan', 'green',
+                        'orchid', 'indigo']
+COCO_SKELETON = np.array([
+                    [16, 14],
+                    [14, 12],
+                    [17, 15],
+                    [15, 13],
+                    [12, 13],
+                    [6, 12],
+                    [7, 13],
+                    [6, 7],
+                    [6, 8],
+                    [7, 9],
+                    [8, 10],
+                    [9, 11],
+                    [2, 3],
+                    [1, 2],
+                    [1, 3],
+                    [2, 4],
+                    [3, 5],
+                    [4, 6],
+                    [5, 7]]) - 1
 

@@ -1,58 +1,13 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import os
+import argparse
+import time
+from datetime import datetime, timedelta
+from utilities.data_utils import transform_bbox_square, crop_and_pad
+from configs import default_config as cfg
+from coco_df import gen_trainval_df
 
-def transform_bbox_square(bbox, scale = 1):
-  '''
-  Make bbox into square with the side is the longer side of old bbox
-  :param bbox: bbox (x, y, width, height)
-  :param scale: scale the bbox
-  '''
-  x, y, w, h = bbox
-  center_x = x + w/2
-  center_y = y + h/2
-
-  if w >= h:
-    new_w = w
-    new_h = w
-  else:
-    new_w = h
-    new_h = h
-
-  new_w *= scale
-  new_h *= scale
-  new_x = center_x - new_w/2
-  new_y = center_y - new_h/2
-
-  return new_x, new_y, new_w, new_h
-
-
-'''Helpers'''
-def image_feature(value):
-    """Returns a bytes_list from a string / byte."""
-    return tf.train.Feature(
-        bytes_list=tf.train.BytesList(value=[tf.io.encode_jpeg(value).numpy()]) #only for jpeg/jpg
-    )
-
-def bytes_feature(value):
-    """Returns a bytes_list from a string / byte."""
-    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value.encode()]))
-
-def float_feature(value):
-    """Returns a float_list from a float / double."""
-    return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
-
-def int64_feature(value):
-    """Returns an int64_list from a bool / enum / int / uint."""
-    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
-    
-def int64_feature_list(value):
-    """Returns an int64_list from a bool / enum / int / uint."""
-    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
-
-def float_feature_list(value):
-    """Returns a list of float_list from a float / double."""
-    return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
 def create_example(image, image_path, example, index, bbox_scale):
   ''' For writing tfrecord example
@@ -69,36 +24,9 @@ def create_example(image, image_path, example, index, bbox_scale):
   
   ## Bbox
   #0: x left top, 1: y left top, 2: width, 3: height
-  bbox_x, bbox_y, bbox_w, bbox_h = transform_bbox_square(example['bbox'], scale = bbox_scale) # make squre bbo
+  bbox = transform_bbox_square(example['bbox'], scale = bbox_scale) # make square bbo
   # offset_width, offset_height, target_width, target_hegiht is for padding
-  offset_width = 0 
-  offset_height = 0
-  target_width = bbox_w
-  target_height = bbox_h
-
-  #print("bbox:", int(bbox_x), int(bbox_y), int(bbox_w), int(bbox_h))
-  # check bound for x
-  if bbox_x < 0:
-    offset_width = -bbox_x
-    bbox_w += bbox_x # since crop uses bbox_w, we should account for when bbox < 0
-    bbox_x = 0
-  if bbox_x + bbox_w > img_width:
-    bbox_w = img_width - bbox_x
-  #check bound for y
-  if bbox_y < 0:
-    offset_height = -bbox_y
-    bbox_h += bbox_y
-    bbox_y = 0
-  if bbox_y + bbox_h > img_height:
-    bbox_h = img_height - bbox_y
-  #print("bbox:", int(bbox_x), int(bbox_y), int(bbox_w), int(bbox_h))
-
-  # Crop 
-  # since we use bbox to crop the bbox width and height will become out new width and height
-  image = tf.image.crop_to_bounding_box(image, int(bbox_y), int(bbox_x), int(bbox_h), int(bbox_w))
-  # Pad
-  #print("offset:",int(offset_width), int(offset_height), int(target_height), int(target_width))
-  image = tf.image.pad_to_bounding_box(image, int(offset_height), int(offset_width), int(target_height), int(target_width))
+  adjusted_image = crop_and_pad(image, bbox)
 
   ## Parse x and y coords
   kps = example['keypoints']
@@ -114,9 +42,9 @@ def create_example(image, image_path, example, index, bbox_scale):
   filtered_ys = []
   filtered_vs = []
   for x, y, v in zip(xs, ys, vs):
-    x = x - bbox_x + offset_width
-    y = y - bbox_y + offset_height
-    if 0 <= x < target_width and 0 <= y < target_height and v > 0:
+    x = x - bbox[0]
+    y = y - bbox[1]
+    if 0 < x < bbox[2] and 0 < y < bbox[3] and v > 0:
       filtered_xs.append(x)
       filtered_ys.append(y)
       filtered_vs.append(v)
@@ -125,11 +53,6 @@ def create_example(image, image_path, example, index, bbox_scale):
       filtered_ys.append(0)
       filtered_vs.append(0)
 
-  #xcoords = [x - bbox_x + offset_width if x > 0  else 0 for x in xcoords]
-  #ycoords = [y - bbox_y + offset_height if y > 0  else 0 for y in ycoords]
-
-  #visibility flag
- 
 
   # Number of keypoints
   kps_vis = list(map(lambda v: v>0, filtered_vs))
@@ -148,19 +71,18 @@ def create_example(image, image_path, example, index, bbox_scale):
   feature = {
         "ann_id": int64_feature(ann_id),
         "image_id": int64_feature(image_id),
-        "image": image_feature(image),
+        "image": image_feature(adjusted_image),
         "image_path": bytes_feature(image_path),
         "coco_url": bytes_feature(coco_url),
-        "width": int64_feature(int(target_width)), # since we crop and pad
-        "height": int64_feature(int(target_height)), # since we crop and pad
+        "width": int64_feature(int(tf.shape(adjusted_image)[1])), # since we crop and pad
+        "height": int64_feature(int(tf.shape(adjusted_image)[0])), # since we crop and pad
         "keypoints/x": float_feature_list(filtered_xs),
         "keypoints/y": float_feature_list(filtered_ys),
         "keypoints/vis": int64_feature_list(filtered_vs),
         "keypoints/num": int64_feature(num_kps),
-        "bbox_x": float_feature(bbox_x),
-        "bbox_y": float_feature(bbox_y),
-        "offset_width": float_feature(offset_width),
-        "offset_height": float_feature(offset_height)
+        "bbox_x": float_feature(bbox[0]),
+        "bbox_y": float_feature(bbox[1]),
+        "original_bbox": float_feature_list(example["bbox"])
     }
   return tf.train.Example(features=tf.train.Features(feature=feature))
 
@@ -193,10 +115,60 @@ def gen_TFRecords(df, config, is_train: bool):
             writer.write(tfrecord_example.SerializeToString())
   print('TFRecords generated at', output_folder)
 
-if __name__ == '__main__':
-  from configs import default_config as cfg
-  from coco_df import gen_trainval_df
+################################## HELPERS ##############################################################
+def image_feature(value):
+    """Returns a bytes_list from a string / byte."""
+    return tf.train.Feature(
+        bytes_list=tf.train.BytesList(value=[tf.io.encode_jpeg(value).numpy()]) #only for jpeg/jpg
+    )
 
-  train_df, valid_df = gen_trainval_df(cfg)
+def bytes_feature(value):
+    """Returns a bytes_list from a string / byte."""
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value.encode()]))
+
+def float_feature(value):
+    """Returns a float_list from a float / double."""
+    return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
+
+def int64_feature(value):
+    """Returns an int64_list from a bool / enum / int / uint."""
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+    
+def int64_feature_list(value):
+    """Returns an int64_list from a bool / enum / int / uint."""
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
+
+def float_feature_list(value):
+    """Returns a list of float_list from a float / double."""
+    return tf.train.Feature(float_list=tf.train.FloatList(value=value))
+
+if __name__ == '__main__':
+  train_df, valid_df = gen_trainval_df(cfg, drop_min_num_kps=True)
+
+  print('Generating train TFRecord files:')
+  start = time.time()
   gen_TFRecords(train_df, cfg, is_train = True)
-  gen_TFRecords(valid_df, cfg, is_train = False)
+  total_time = time.time() - start
+  print("Total time: {}".format(str(timedelta(seconds=total_time))))
+
+  print('Generating valid TFRecord files:')
+  start = time.time()
+  gen_TFRecords(train_df, cfg, is_train = False)
+  total_time = time.time() - start
+  print("Total time: {}".format(str(timedelta(seconds=total_time))))
+
+
+  
+  
+  
+
+  
+
+
+
+
+
+
+
+
+

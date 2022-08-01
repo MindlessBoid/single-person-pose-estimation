@@ -21,7 +21,7 @@ def weighted_mse(y_true, y_pred):
   return tf.reduce_mean(tf.math.square(y_true - y_pred) * weights, axis = -1)
 
 def IOU(y_true, y_pred):
-  epsilon = 1e-6
+  epsilon = tf.keras.backend.epsilon()
   inter = tf.reduce_sum(y_true*y_pred, axis = [1, 2])
   union = tf.reduce_sum(y_true*y_true, axis = [1, 2]) + tf.reduce_sum(y_pred*y_pred, axis = [1, 2]) - inter
   IoU = (inter + epsilon) / (union + epsilon)

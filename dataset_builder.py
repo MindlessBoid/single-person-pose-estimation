@@ -74,14 +74,14 @@ class DatasetBuilder:
     # Perform augmentation 2
     aug_image = self.augment_2(aug_image)
     # Gen heatmaps
-    heatmaps = self.tf_gen_heatmaps(aug_kps_x, aug_kps_y)
+    heatmaps = self.tf_gen_heatmaps(aug_kps_x, aug_kps_y, kps_v)
 
     return aug_image, heatmaps
   
 
   def make_valid_label(self, image, kps_x, kps_y, kps_v):
     # Just gen heatmaps
-    heatmaps = self.tf_gen_heatmaps(kps_x, kps_y)
+    heatmaps = self.tf_gen_heatmaps(kps_x, kps_y, kps_v)
 
     return image, heatmaps
 
@@ -119,8 +119,7 @@ class DatasetBuilder:
     image = example['image']
 
     meta = {}
-    meta['original_height'] = example['height']
-    meta['original_width'] = example['width']
+    
     meta['ann_id'] = example['ann_id']
     meta['image_id'] = example['image_id']
     meta['coco_url'] = example['coco_url']
@@ -129,8 +128,9 @@ class DatasetBuilder:
     meta['keypoints/vis'] = example['keypoints/vis']
     meta['bbox_x'] = example['bbox_x'] # top left bbox
     meta['bbox_y'] = example['bbox_y'] # top left bbox
-    meta['offset_width'] = example['offset_width'] # amount to add if the bbox out of the image 
-    meta['offset_height'] = example['offset_height'] # amount to add if the bbox out of the image 
+    meta['bbox_h'] = example['height']
+    meta['bbox_w'] = example['width']
+    meta['original_bbox'] = example['original_bbox']
 
     # to 256x256
     resized_image = tf.image.resize(image, (self.image_shape[0], self.image_shape[1]))
@@ -160,7 +160,7 @@ class DatasetBuilder:
     '''
     imgaug_kps = [] # to store imgaug keypoint format
     for x, y, v in zip(kps_x, kps_y, kps_v):
-      if v: # not necessary but just for sure
+      if v > 0: # not necessary but just for sure
         imgaug_kps.append(Keypoint(x=x, y=y))
       else:
         imgaug_kps.append(Keypoint(x=0.0, y=0.0))
@@ -172,11 +172,11 @@ class DatasetBuilder:
 
     flipped_img, flipped_kpsoi = image, kpsoi
     # FlipLR
-    flip_flag = random.choice([0, 1])
+    flip_flag = random.choice([True, False])
     if flip_flag:
       flip = iaa.Fliplr(1.0)
       flipped_img, flipped_kpsoi = flip(image=image, keypoints=kpsoi)
-      flipped_kpsoi = self.flip_labels(flipped_kpsoi, self.index_flip_pairs)
+      flipped_kpsoi, kps_v = self.flip_labels(flipped_kpsoi, self.index_flip_pairs, kps_v)
 
     # Affine
     aff = iaa.Affine(scale = (0.75, 1.25), rotate = (-30, 30))
@@ -188,7 +188,7 @@ class DatasetBuilder:
     output_kps_y = np.zeros(shape = self.num_keypoints , dtype = np.float32)
 
     for i in range(self.num_keypoints):
-      if kps_v[i]: # use vis to filtered out augmented (0, 0) keypointed
+      if kps_v[i] > 0: # use vis to filtered out augmented (0, 0) keypointed
         output_kps_x[i] = arr[i, 0]
         output_kps_y[i] = arr[i, 1]
       else:
@@ -217,7 +217,7 @@ class DatasetBuilder:
     return (image - min_val)/(max_val - min_val) # clip
 
 
-  def np_gen_heatmaps(self, kps_x, kps_y):
+  def np_gen_heatmaps(self, kps_x, kps_y, kps_v):
     '''
     Creates 2D heatmaps from keypoints coordinates for one single example/image
     :param kps_x, kps_y: x and y coordisnate in shape of (number of kps)
@@ -228,14 +228,14 @@ class DatasetBuilder:
     for i in range(self.num_keypoints):
       x = int(kps_x[i])
       y = int(kps_y[i])
-      if 0 < x < self.label_shape[1] and 0 < y < self.label_shape[0]:
+      if 0 < x < self.label_shape[1] and 0 < y < self.label_shape[0] and kps_v[i] > 0:
         heatmaps[y][x][i] = 1.0
         heatmaps[:,:,i] = gaussian(heatmaps[:,:,i], (x, y))
         heatmaps[:,:,i] = heatmaps[:,:,i] / heatmaps[:,:,i].max()#normalize
     return heatmaps
 
-  def tf_gen_heatmaps(self, kps_x, kps_y):
-    return tf.numpy_function(self.np_gen_heatmaps, [kps_x, kps_y], tf.float32)
+  def tf_gen_heatmaps(self, kps_x, kps_y, kps_v):
+    return tf.numpy_function(self.np_gen_heatmaps, [kps_x, kps_y, kps_v], tf.float32)
 
   # Some utils
   @staticmethod
@@ -257,8 +257,7 @@ class DatasetBuilder:
         "keypoints/num": tf.io.FixedLenFeature([], tf.int64),
         "bbox_x": tf.io.FixedLenFeature([], tf.float32),
         "bbox_y": tf.io.FixedLenFeature([], tf.float32),
-        "offset_width": tf.io.FixedLenFeature([], tf.float32),
-        "offset_height": tf.io.FixedLenFeature([], tf.float32)
+        "original_bbox": tf.io.VarLenFeature(tf.float32)
     }
     
     example = tf.io.parse_single_example(example, feature_description)
@@ -266,10 +265,11 @@ class DatasetBuilder:
     example["keypoints/x"] = tf.sparse.to_dense(example["keypoints/x"])
     example["keypoints/y"] = tf.sparse.to_dense(example["keypoints/y"])
     example["keypoints/vis"] = tf.sparse.to_dense(example["keypoints/vis"])
+    example["original_bbox"] = tf.sparse.to_dense(example["original_bbox"])
     return example
 
   @staticmethod
-  def flip_labels(imgaug_kpsoi, flip_index_pairs):
+  def flip_labels(imgaug_kpsoi, flip_index_pairs, kps_v):
     '''
       Usages:
         Use to flip the labels
@@ -286,17 +286,19 @@ class DatasetBuilder:
     shape = imgaug_kpsoi.shape
     xs = imgaug_kpsoi.to_xy_array()[:, 0]
     ys = imgaug_kpsoi.to_xy_array()[:, 1]
+    vs = kps_v[:] # deep copy so wont modify kps_v by accident
 
     for index_pair in flip_index_pairs:
       xs[index_pair[0]], xs[index_pair[1]] = xs[index_pair[1]], xs[index_pair[0]]
       ys[index_pair[0]], ys[index_pair[1]] = ys[index_pair[1]], ys[index_pair[0]]
+      vs[index_pair[0]], vs[index_pair[1]] = vs[index_pair[1]], vs[index_pair[0]]
 
     imgaug_kps = []
     for x, y in zip(xs, ys):
       imgaug_kps.append(Keypoint(x, y))
     
     kpsoi = KeypointsOnImage(imgaug_kps, shape = shape)
-    return kpsoi
+    return kpsoi, vs
 
 
   @staticmethod
