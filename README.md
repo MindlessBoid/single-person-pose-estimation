@@ -8,7 +8,7 @@ This repository is a Tensorflow implementation of the [Stack-Hourglass Network](
 ## Stacked Hourglass Architecture
 
 ----
-![Stacked Hourglass module from the paper](/figures/shn_paper.png)
+![Stacked Hourglass module from the paper](/figures/shn_paper.PNG)
 ![Stacked Hourglass module](/figures/hourglass_module.png)
 
 ## Guide on train/evaluation/demo
@@ -35,10 +35,11 @@ argparse has not been supported yet. It is recommended to run everything in Goog
 
 ----
 * Available metrics: OKS and PCK.
-![OKS evaluation](/figures/OKS.png)
-![PCK evaluation](/figures/PCK.png)
+![ds_train_image_kps](/figures/ds_train_image_kps.png)
+![ds_valid_image_kps](/figures/ds_valid_image_kps.png)
+![OKS evaluation](/figures/OKS.PNG)
+![PCK evaluation](/figures/PCK.PNG)
 * For more details: `evaluation.ipynb`.
-
 
 ## Demo
 
