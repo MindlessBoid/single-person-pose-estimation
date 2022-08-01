@@ -36,8 +36,10 @@ argparse has not been supported yet. It is recommended to run everything in Goog
 * Heatmaps for valid dataset:
 ![ds_valid_image_kps](/figures/ds_valid_image_kps.png)
 * OKS evalutation:
+
 ![OKS evaluation](/figures/OKS.PNG)
 * PCK evaluation:
+
 ![PCK evaluation](/figures/PCK.PNG)
 * For more details: `evaluation.ipynb`.
 
